@@ -72,7 +72,9 @@ Protocol v1 accepts an encoded application frame of at most 65,536 bytes and inl
 
 Each participant allows at most 64 connected peers, 32 queued undecoded frames per peer, 128 queued undecoded frames globally, and 20 accepted frames per peer in any rolling 10-second window with a burst ceiling of 40. Ordinary messages expire within five minutes and tolerate at most 30 seconds of future clock skew; capability advertisements expire within fifteen minutes.
 
-Boundary parsing rejects unknown versions, missing fields, unknown message types, oversized payloads, expired messages, invalid signatures, duplicate IDs, replayed nonces, and out-of-domain values. Internal modules receive parsed domain values rather than raw objects.
+A reviewed schema decoder parses every untrusted wire value before domain logic runs. Library selection must pass the Bun and Bare compatibility proof, but decoding is mandatory rather than conditional on one library. Boundary parsing rejects unknown versions, missing fields, unknown message types, oversized payloads, invalid signatures, and out-of-domain values. Internal modules receive parsed domain values rather than raw objects.
+
+After bounded schema and signature validation, admission checks the persisted message ID before expiry or nonce state. Identical canonical bytes for an accepted ID return its recorded result; different bytes under that ID are a conflict. Only an unseen ID proceeds to expiry checking and then nonce admission, so an unseen expired message is `expired` and an unseen non-expired nonce at or below the high-water mark is `replayed`.
 
 Protocol v1 message families:
 
@@ -89,7 +91,11 @@ Protocol v1 uses one canonical byte encoding for both signatures and hashes. Iss
 
 Replay admission is strict and durable per `(sender identity, signing-key revision)`. The first accepted nonce establishes a high-water mark. A later nonce is accepted only when it is greater than that mark; gaps are allowed, and a delayed nonce at or below the mark is rejected rather than reordered. A key revision starts a new sequence only after its signed rotation statement is accepted.
 
-The participant atomically persists the new high-water mark, message ID, payload hash, and transition result before acknowledging the message or starting a side effect. Repeating the same message ID and payload returns the recorded result; reusing an ID with different bytes is a conflict. Non-economic deduplication records remain for 30 days after message expiry. Records linked to agreements, execution, verification, payments, receipts, disputes, or rulings remain with that evidence. Networking does not start after restart until replay state decodes and validates; missing or corrupt state fails closed.
+The participant atomically persists the new high-water mark, message ID, payload hash, and transition result before acknowledging the message or starting a side effect. Non-economic deduplication records remain for 30 days after message expiry. Records linked to agreements, execution, verification, payments, receipts, disputes, or rulings remain with that evidence.
+
+Every persisted record and migration snapshot begins with an explicit schema version and is decoded and invariant-checked into a versioned persisted type before it can affect live state. A migration writes an immutable replacement generation, including every nonce high-water mark, message result, payload hash, key revision, agreement, evidence record, receipt, and settlement state. It validates that generation and its checksum before atomically selecting it through one durable generation manifest. Single-writer generation fencing rejects stale commits. An interruption leaves either the complete prior generation or the complete validated replacement authoritative; unselected snapshots have no authority.
+
+Unsupported versions, missing migration paths, corrupt records, stale generation writers, or failed post-migration validation keep networking and side effects closed. Rollback may select an older generation only when its compatibility contract proves that no accepted state is lost. Issues #3 and #13 own the persisted-state contract and its interruption, stale-writer, corruption, and preservation tests before networking implementation is accepted.
 
 ## Capability market
 
@@ -165,11 +171,15 @@ flowchart TD
   Policy --> PaymentAuthorized
 ```
 
-WDK is the only settlement implementation. The Track 1 adapter is an operator-local Node sidecar pinned to `@tetherto/wdk-cli` `1.0.0-beta.3`. It launches `wdk-mcp` over stdio and permits only fixed typed calls to `get_address`, `get_balance`, `get_history`, and `send_token`; no model, peer, browser command, or arbitrary MCP client receives that capability. The human creates and unlocks the dedicated tiny-balance wallet, and Agentopoly never handles its passphrase or seed.
+WDK is the only permitted settlement technology. The required Track 1 adapter contract is an operator-local Node sidecar pinned to `@tetherto/wdk-cli` `1.0.0-beta.3`. The wallet-policy host will spawn the sidecar over private inherited stdio; the sidecar exposes no listening socket, discovery endpoint, arbitrary MCP relay, or raw transfer method. The inherited pipe endpoint is the caller capability, and the sidecar accepts commands only from that single parent channel. Its boundary schema is a closed command union for address, balance, history, `PaymentPreviewRequest`, and `ReservedPaymentAttempt`. A preview request binds the exact `PaymentAuthorized` and can invoke only `dryRun=true`. The broadcast path accepts only a locally created `ReservedPaymentAttempt` binding that authorization, authorization key, attempt ID, preview hash, and preview expiry. All other arguments are rejected before reaching WDK.
 
-For a transfer, the adapter first verifies `get_address` for the authorized wallet and account index, then calls `send_token` with the exact network, registered USDt token, destination, atomic amount string, `baseUnits=true`, and `dryRun=true`. It decodes the response and compares network, token contract, destination, amount, and estimated native fee to `PaymentAuthorized`. The estimate must not exceed the authorized native-fee cap. A local preview expires after 30 seconds; expiry requires a new preview and complete comparison. The adapter broadcasts with the same fixed arguments and `dryRun=false` only while every witness still holds.
+The sidecar will launch `wdk-mcp` over its own stdio and map the closed command union to fixed typed calls to `get_address`, `get_balance`, `get_history`, and `send_token`; no model, peer, browser command, provider process, or general MCP client may receive that capability. This contract does not claim that the sidecar is installed, implemented, tested, or safe for wallet use. A compromised same-user process may still reach the human-unlocked WDK daemon directly, which remains a disclosed residual risk. The human creates and unlocks the dedicated tiny-balance wallet, and Agentopoly never handles its passphrase or seed.
 
-Before the broadcast call, durable state atomically changes the authorization key from `available` to `reserved(attemptId, previewHash, expiresAt)`. A duplicate observes that record rather than starting another call. Success records `broadcast(attemptId, transactionHash)` before producing a receipt. A crash or transport failure after reservation leaves `reconciliation-pending`: restart queries WDK history for the exact source, destination, network, token, and amount. It may mark the known transaction broadcast, or release the reservation only when the reviewed reconciliation contract proves no transfer occurred. An unknown result never retries automatically.
+For a transfer, the adapter contract first verifies `get_address` for the authorized wallet and account index, then calls `send_token` with the exact network, registered USDt token, destination, atomic amount string, `baseUnits=true`, and `dryRun=true`. Agentopoly requires a preview witness for network, token contract, destination, amount, and estimated native fee, but the exact WDK response shape remains unproven until captured official-package responses are reviewed and encoded as fixtures. A missing, malformed, partial, or synthesized field fails closed. The estimate must not exceed the authorized native-fee cap. A local preview expires after 30 seconds; expiry requires a new preview and complete comparison. The adapter may broadcast with the same fixed arguments and `dryRun=false` only while every witness still holds.
+
+Immediately before an external broadcast, durable state changes the authorization key from `available` to `reserved(attemptId, previewHash, previewExpiresAt)`, then to `broadcasting(attemptId)` before invoking WDK. A duplicate observes the record rather than starting another call. Preview expiry never releases a `broadcasting` or `reconciliation-pending` attempt. A process that can prove from durable state that it never entered `broadcasting` may discard the unused preview and return the authorization to `available`; after `broadcasting`, no automatic release is valid.
+
+The in-flight call has only two post-invocation outcomes. A fully decoded success response containing a transaction hash is the sole attempt-correlated witness and records `broadcast(attemptId, transactionHash)` before producing a receipt. A timeout, transport failure, explicit or partial error, malformed response, missing transaction hash, or crash is `unknown` and records `reconciliation-pending(attemptId)`. WDK history may identify candidate transfers, but a match on source, destination, network, token, amount, or time window cannot bind a transaction to the attempt or prove absence. History cannot manufacture the missing witness. Without a future reviewed recovery protocol, the reservation remains blocked and is never released or retried automatically.
 
 A payment receipt binds the job, authorization key, attempt ID, terms hash, verification hash, transaction hash, source and destination, atomic amount, asset and token contract, network, estimated and observed native fee, policy revision, broadcast time, and observed settlement state. Receipt creation never upgrades an unconfirmed observation to final settlement.
 
@@ -217,7 +227,7 @@ Every transition is explicit, idempotent, and attributable to an accepted signed
 ## Partner boundaries
 
 - **Pear:** Bare host and worker lifecycle, Hyperswarm connectivity, evidence replication where useful, standalone packaging, seeding, install, and OTA.
-- **WDK:** the pinned operator-local `wdk-mcp` sidecar and wallet daemon own address, balance, history, preview, broadcast, and settlement observation; the Pear worker has no wallet capability.
+- **WDK:** the selected boundary assigns address, balance, history, preview, broadcast, and settlement observation to a future pinned operator-local `wdk-mcp` sidecar and wallet daemon; the Pear worker has no wallet capability.
 - **Agentopoly:** protocol, agreement, state machine, policy, execution adapters, verification, evidence linkage, receipts, reputation, and arbitration.
 - **QVAC:** optional cognition or delegated inference adapter after MVP stability.
 
@@ -256,14 +266,17 @@ The recorded three-minute demo is complete only when it shows:
 
 Hostile and stale inputs have explicit acceptance outcomes:
 
-| Input                                                                | Observable outcome                                              | Side-effect guarantee                                            |
-| -------------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Malformed or oversized frame                                         | Bounded boundary refusal; job state unchanged                   | No execution, signing, WDK, or settlement call                   |
-| Replayed nonce, duplicate ID, or expired message                     | Recorded replay, duplicate, or expiry result; no new transition | Previously recorded result only; no repeated side effect         |
-| Impossible state transition                                          | Typed invariant refusal; prior valid state retained             | No partial durable mutation or external side effect              |
-| Unauthorized payment request                                         | Refusal identifies the failed local witness                     | Zero WDK preview or broadcast calls                              |
-| Source, token, amount, destination, network, or fee-preview mismatch | Payment remains refused or reserved for a fresh exact preview   | Zero WDK broadcast calls                                         |
-| Unknown result after reservation                                     | Visible `reconciliation-pending` state                          | No automatic retry until reconciliation proves no prior transfer |
+| Input                                                                | Observable outcome                                                  | Side-effect guarantee                                               |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Malformed or oversized frame                                         | Bounded boundary refusal; job state unchanged                       | No execution, signing, WDK, or settlement call                      |
+| Duplicate message ID with identical bytes                            | Return the first recorded transition result                         | No new transition or repeated side effect                           |
+| Message ID reused with different bytes                               | Typed conflicting-ID refusal                                        | No transition or external side effect                               |
+| Nonce at or below the accepted high-water mark                       | Typed replay refusal                                                | No transition or repeated side effect                               |
+| Otherwise valid message observed after expiry                        | Typed expiry refusal                                                | No transition or external side effect                               |
+| Impossible state transition                                          | Typed invariant refusal; prior valid state retained                 | No partial durable mutation or external side effect                 |
+| Unauthorized payment request                                         | Refusal identifies the failed local witness                         | Zero WDK preview or broadcast calls                                 |
+| Source, token, amount, destination, network, or fee-preview mismatch | Payment remains refused or reserved for a fresh exact preview       | Zero WDK broadcast calls                                            |
+| Unknown result after reservation                                     | Visible `reconciliation-pending`; tuple matches are candidates only | No automatic release or retry without an attempt-correlated witness |
 
 ## Presentation surface
 

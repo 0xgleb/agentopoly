@@ -2,6 +2,8 @@
 
 Initial judging is async and entirely online. The required artifact is a three-minute recorded video, not a fragile live multi-device performance. Live topology becomes relevant only if the project reaches finals.
 
+This document defines target acceptance, not current implementation evidence. The WDK sidecar, preview, broadcast, and wallet capability remain unimplemented and must not appear in a recording until the pinned boundary and real responses pass their required tests.
+
 ## Required story: the market distinguishes good work from bad
 
 1. Four distinct identities appear: buyer, reliable provider, malicious or incompetent provider, and arbitrator.

@@ -20,7 +20,7 @@ flowchart LR
 
 ## Status
 
-Agentopoly is an active hackathon build. The specification, architecture, threat model, roadmap, and GitHub issues define the implementation contract.
+Agentopoly is an active hackathon build. The specification, architecture, threat model, roadmap, and GitHub issues define the implementation contract. The operator-local WDK sidecar and wallet path are planned boundaries, not current implementation or wallet-readiness evidence; no wallet capability starts during the documented setup or quality gates.
 
 ## The product distinction
 
@@ -45,7 +45,7 @@ The artifact is tangible, the verifier is objective, and successful verification
 ## Partner technology fit
 
 - **Pear:** standalone participant runtime, peer discovery and transport, P2P installation, seeding, and OTA updates.
-- **WDK:** dedicated wallet access, transfer preview, guarded USDt settlement, and transaction history.
+- **WDK:** planned operator-local dedicated-wallet access, transfer preview, guarded USDt settlement, and transaction history.
 - **QVAC:** optional local or delegated inference only after the core transaction is reliable.
 - **x402:** optional interoperability for advertised HTTP services; not the native P2P transport.
 

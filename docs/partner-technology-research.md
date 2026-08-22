@@ -1,7 +1,7 @@
 # Partner technology research
 
 - Checked: 2026-08-22
-- Source policy: official documentation only for factual claims
+- Source policy: official documentation plus exact installed official-package source and locked package metadata for factual claims
 - Scope rule: research informs the build; external application code is not imported
 
 ## Pear
@@ -33,7 +33,7 @@ The WDK CLI MCP server exposes wallet operations over stdio and routes wallet-de
 
 Wallet administration is deliberately not exposed over MCP: create, import, export, unlock, lock, delete, rename, and default selection remain CLI/human operations. The wallet must already be unlocked.
 
-The installed official `@tetherto/wdk-cli` `1.0.0-beta.3` package uses MCP's `StdioServerTransport`, routes wallet operations to the daemon, and exposes structured `get_address`, `get_balance`, `get_history`, and `send_token` tools. Its `send_token` schema accepts an atomic-unit string with `baseUnits=true` and defaults `dryRun` to true.
+The installed official `@tetherto/wdk-cli` `1.0.0-beta.3` package uses MCP's `StdioServerTransport`, routes wallet operations to the daemon, and exposes structured `get_address`, `get_balance`, `get_history`, and `send_token` tools. Its `send_token` request schema accepts an atomic-unit string with `baseUnits=true` and defaults `dryRun` to true. The exact preview-success, broadcast-success, partial-error, and failure response fields are not yet verified by captured fixtures and must not be inferred from that request schema.
 
 Security details are important:
 
@@ -47,7 +47,7 @@ Security details are important:
 
 The operator creates and unlocks a dedicated tiny-balance development wallet. Agentopoly must enforce its own exact, capped authorization and preview comparison before any broadcast. A peer never receives MCP or wallet access.
 
-The architecture selects a separate operator-local Node sidecar that launches the pinned WDK MCP server over stdio. Agentopoly's client will allow only fixed typed address, balance, history, and `send_token` calls and will route them to the human-unlocked WDK daemon. The standalone Bare worker remains wallet-blind.
+The architecture selects, but has not yet implemented, a separate operator-local Node sidecar that the wallet-policy host spawns over private inherited stdio. The inherited pipe endpoint is the single-parent caller capability, and a closed command union will separate dry-run preview from a broadcast-only durable reserved attempt; the sidecar will expose no listener, raw transfer method, or arbitrary MCP relay. It will launch the pinned WDK MCP server over its own stdio and route only fixed typed address, balance, history, and `send_token` calls after the request and response boundaries are implemented and tested. The standalone Bare worker remains wallet-blind.
 
 ### Sources
 

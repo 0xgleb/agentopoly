@@ -9,6 +9,7 @@ No money-moving implementation may start until its abuse tests exist and fail fo
 
 - Dedicated development-wallet funds
 - Wallet unlock session and signing authority
+- Private inherited sidecar channel
 - Protocol signing identity
 - Exact job terms and price
 - Delivered artifact and acceptance contract
@@ -27,12 +28,14 @@ No money-moving implementation may start until its abuse tests exist and fail fo
 4. Acceptance contract -> local verifier invocation
 5. Process output -> bounded verification evidence
 6. Agreement and verification -> local payment authorization
-7. Payment authorization -> WDK preview and broadcast
-8. WDK/history response -> settlement observation
-9. Stored evidence -> replayed state
-10. Local browser command -> local application command
-11. Original dispute evidence -> arbitrator input
-12. Arbitrator output -> ruling artifact
+7. Payment authorization -> private sidecar preview request
+8. Durable reserved attempt -> private sidecar broadcast request
+9. Sidecar closed command -> WDK MCP and daemon
+10. WDK/history response -> typed settlement outcome
+11. Stored record or migration snapshot -> replayed state
+12. Local browser command -> local application command
+13. Original dispute evidence -> arbitrator input
+14. Arbitrator output -> ruling artifact
 
 ## STRIDE analysis
 
@@ -40,9 +43,11 @@ No money-moving implementation may start until its abuse tests exist and fail fo
 | ---------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Spoofing               | Peer claims another identity or wallet                                            | Verify protocol signature; bind wallet and peer key in signed terms; reject identity rotation without a signed revision                                                                                                                         |
 | Spoofing               | Fake local-browser command requests payment                                       | Local command authentication; UI cannot construct `PaymentAuthorized`                                                                                                                                                                           |
+| Spoofing               | Unrelated local process calls the planned sidecar                                 | No listener; the inherited pipe endpoint is the single-parent caller capability; the closed command union accepts broadcast only as `ReservedPaymentAttempt`                                                                                    |
 | Tampering              | Bid amount, destination, acceptance criteria, or artifact changes after agreement | Canonical terms hash signed by both parties; artifact and evidence hashes bind later records                                                                                                                                                    |
 | Tampering              | WDK address or preview differs from the authorized transfer                       | Verify source address separately; compare network, token contract, atomic amount, destination, and native fee cap exactly before broadcast                                                                                                      |
-| Tampering              | Persisted evidence is malformed or reordered                                      | Decode and revalidate every record; hash-link records; deterministic replay refuses impossible transitions                                                                                                                                      |
+| Tampering              | Missing or synthesized WDK response field appears to satisfy policy               | Decode captured, version-pinned response shapes; a missing, malformed, partial, or unproven field fails closed                                                                                                                                  |
+| Tampering              | Persisted evidence is malformed, reordered, or from an incompatible schema        | Decode and revalidate every versioned record; migrate through an atomically selected validated snapshot; hash-link records; deterministic replay refuses impossible transitions                                                                 |
 | Repudiation            | Buyer denies agreeing or provider denies delivery                                 | Signed terms and signed delivery bound to identities and hashes                                                                                                                                                                                 |
 | Repudiation            | Arbitrator denies ruling                                                          | Signed ruling artifact with evidence references and separate paid-job receipt                                                                                                                                                                   |
 | Information disclosure | Peer task or process output leaks credentials or unrelated paths                  | Bounded fixture workspace; redact evidence; never include operator environment or unrestricted stdout/stderr                                                                                                                                    |
@@ -52,7 +57,7 @@ No money-moving implementation may start until its abuse tests exist and fail fo
 | Denial of service      | Bad latest evidence silently falls back to older favorable evidence               | Fail closed on the latest relevant record; do not choose stale authority                                                                                                                                                                        |
 | Elevation of privilege | Remote message directly invokes WDK or a shell                                    | Strict capability separation; protocol events are data; local policy and reviewed adapters own side effects                                                                                                                                     |
 | Elevation of privilege | Model output writes outside fixture or changes acceptance command                 | Disposable workspace, path confinement, local command map, no model shell authority                                                                                                                                                             |
-| Elevation of privilege | Duplicate/replayed success or a crash after broadcast triggers a second payment   | Atomically reserve one authorization key before broadcast; persist attempt and transaction state; unknown results reconcile through WDK history and never auto-retry                                                                            |
+| Elevation of privilege | Duplicate/replayed success or a crash after broadcast triggers a second payment   | Atomically reserve one authorization key before broadcast; persist attempt and transaction state; treat tuple-only history matches as candidates; keep ambiguous attempts reserved and never auto-release or retry                              |
 
 ## Capped automatic wallet policy
 
@@ -74,7 +79,9 @@ A real transfer is allowed only when all are true:
 - no payment receipt, broadcast, or unresolved reservation exists for this authorization key;
 - all evidence is fresh enough for the reviewed policy.
 
-The selected Track 1 path is `@tetherto/wdk-cli` `1.0.0-beta.3`: an operator-local Node sidecar launches `wdk-mcp` over stdio, which reaches the human-unlocked WDK daemon through its user-scoped Unix socket. Agentopoly allows only fixed typed address, balance, history, and `send_token` calls. `send_token` defaults to dry-run, but the daemon does not enforce confirmation before a direct real send, so Agentopoly's local layer independently enforces source verification, preview comparison, caps, reservation, and reconciliation. The Pear worker, browser, provider, and model receive no MCP client, daemon socket, passphrase, seed, or command selector.
+The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the wallet-policy host spawns a planned operator-local Node sidecar over private inherited stdio, and the sidecar launches `wdk-mcp` over its own stdio. The inherited pipe endpoint is the single-parent caller capability. A closed command union allows address, balance, history, a dry-run-only `PaymentPreviewRequest`, and a broadcast-only `ReservedPaymentAttempt`; it never forwards caller-supplied tool names or raw transfer arguments. The exact preview, success, and error response shapes remain untrusted until captured official-package fixtures prove them.
+
+`wdk-mcp` reaches the human-unlocked WDK daemon through its user-scoped Unix socket. `send_token` defaults to dry-run, but the daemon does not enforce confirmation before a direct real send, so the local layer must independently enforce source verification, preview comparison, caps, reservation, and response classification. This design is not evidence that the sidecar is implemented, installed, tested, or safe for wallet use. The Pear worker, browser, provider, and model may never receive an MCP client, daemon socket, passphrase, seed, or command selector. A compromised same-user process can still reach the daemon directly and remains a disclosed residual risk.
 
 ## Required abuse tests before implementation
 
@@ -82,15 +89,21 @@ The selected Track 1 path is `@tetherto/wdk-cli` `1.0.0-beta.3`: an operator-loc
 
 - invalid signature is rejected;
 - wrong sender identity is rejected;
-- expired message is rejected;
-- duplicate message ID is idempotent;
-- replayed nonce is rejected;
+- an accepted message ID with identical canonical bytes returns its first recorded result even after message expiry or nonce advancement;
+- the same message ID with different canonical bytes is a conflict;
+- an unseen expired message is `expired` before nonce admission;
+- an unseen non-expired nonce at or below the high-water mark is `replayed`;
 - oversized frame is dropped before payload allocation;
 - queue and peer caps refuse excess work without evicting accepted state;
 - rate-limit boundary accepts the twentieth frame and refuses the twenty-first in the same window;
 - compressed frame is rejected before decompression or payload allocation;
 - unknown version and message type fail closed;
-- same semantic terms with different serialization cannot produce ambiguous hashes.
+- same semantic terms with different serialization cannot produce ambiguous hashes;
+- unsupported or corrupt persisted-record schema versions keep networking closed;
+- a replacement generation with a bad checksum or invariant violation cannot become active;
+- interrupted migration leaves the complete prior generation authoritative;
+- concurrent or stale generation writers cannot replace the selected manifest;
+- a successful migration preserves every nonce high-water mark, message result, payload hash, key revision, agreement, evidence record, receipt, and settlement state.
 
 ### Execution and verification
 
@@ -110,13 +123,19 @@ The selected Track 1 path is `@tetherto/wdk-cli` `1.0.0-beta.3`: an operator-loc
 - per-job limit boundary allows exactly the cap and refuses cap plus one atomic unit;
 - session cap conserves total authorized spend across concurrent jobs;
 - concurrent duplicate authorization broadcasts at most once;
+- a second local caller cannot attach to the private inherited sidecar channel, and a raw tool name or raw transfer argument is rejected before any WDK call;
+- `PaymentPreviewRequest` can invoke only `dryRun=true`, while broadcast requires the matching durable `ReservedPaymentAttempt`;
 - preview token, network, destination, amount, or fee mismatch refuses broadcast;
+- a missing, malformed, partial, or synthesized preview field refuses broadcast;
 - a preview older than 30 seconds is never reused;
 - stale wallet state refuses broadcast;
-- crash after reservation but before the call resumes as reconciliation-pending without broadcast;
-- crash after broadcast but before receipt persistence reconciles the existing transaction and never auto-retries an unknown result;
+- crash while `reserved` but before the durable `broadcasting` marker proves no invocation; returning to `available` still requires a new preview and complete policy evaluation;
+- crash or any non-success after the `broadcasting` marker remains reconciliation-pending;
+- only the fully decoded in-flight success response with its transaction hash identifies the attempt;
+- explicit error, partial response, missing transaction hash, timeout, transport failure, and malformed response all remain unknown and reserved;
+- crash after broadcast but before receipt persistence never treats a tuple-only history match as attempt identity;
+- an unknown result remains reserved without automatic release or retry;
 - failed or disputed verification cannot mint `PaymentAuthorized`;
-- malformed WDK response fails closed;
 - receipt is not marked settled from a broadcast hash alone.
 
 ### Arbitration

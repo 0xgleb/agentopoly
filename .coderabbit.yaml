@@ -13,7 +13,7 @@ reviews:
   auto_assign_reviewers: true
   poem: false
   path_instructions:
-    - path: '*'
+    - path: '**/*'
       instructions: >-
         Focus on providing constructive criticism. Whenever you see a suboptimal approach, suggest
         more idiomatic or robust alternative(s). Flag potential footguns. Suggest FP alternatives to
