@@ -21,6 +21,24 @@ A checkpoint may contain several issues, but it is not complete until the applic
 9. **Synchronize docs.** README, SPEC, ROADMAP, architecture, threat model, and issue status must remain true.
 10. **Publish after evidence.** Commit and push only when the gates pass.
 
+## Authoritative quality commands
+
+`package.json` is the source of truth for Bun scripts; `flake.nix` is the source of truth for Nix checks; `.github/workflows/ci.yml` must invoke the same commands with read-only repository permissions and explicit timeouts.
+
+| Evidence                      | Command                                |
+| ----------------------------- | -------------------------------------- |
+| Frozen dependency install     | `bun install --frozen-lockfile`        |
+| Formatting                    | `bun run format`                       |
+| Linting                       | `bun run lint`                         |
+| Runtime and test typechecking | `bun run typecheck`                    |
+| Unit and integration tests    | `bun run test`                         |
+| Build                         | `bun run build`                        |
+| Aggregate Bun gate            | `bun run check`                        |
+| Runtime dependency audit      | `bun audit --production`               |
+| Nix evaluation and checks     | `nix flake check --no-write-lock-file` |
+
+Clean-clone evidence must start from a fresh clone with no inherited `node_modules`, `.direnv`, build output, environment values, or generated files. Enter the pinned shell through direnv or `nix develop`, run the frozen install and both aggregate gates, and record the exact commands and target platform in the PR. `.env.example` names configuration keys but contains no real values.
+
 ## Done means
 
 A reviewer can verify from the PR that:
@@ -52,14 +70,17 @@ Record an architecture decision only when the choice is expensive to reverse and
 
 ## Dependency intake
 
-Dependencies are added through Bun after the event starts. Before acceptance, verify:
+Dependencies are added through Bun. Before acceptance, record and verify:
 
-- current official package and version;
-- Bare versus Node runtime requirements;
-- install or build scripts;
+- the exact direct requirement and resolved version;
+- the corresponding `bun.lock` entry and integrity evidence;
+- the applicable pinned Nix input revision when Nix supplies the tool;
+- Bare versus Node runtime requirements and import conditions;
+- install or build scripts, including every blocked lifecycle script;
 - native binary requirements and supported platforms;
 - license and maintenance state;
-- whether the capability belongs in the critical path.
+- transitive native code and vulnerability findings;
+- whether the capability belongs in the critical path and which authority boundary receives it.
 
 ## Reporting blockers
 

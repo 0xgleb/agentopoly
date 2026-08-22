@@ -11,7 +11,11 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  Dispute --> HireArbitrator["Hire arbitrator"] --> SubmitEvidence["Submit evidence"] --> Ruling --> Settlement
+  FailedVerification["Verification fails"] --> Withhold["Withhold provider payment"] --> HireArbitrator["Hire arbitrator"] --> SubmitEvidence["Submit evidence"] --> Ruling
+  Ruling --> PayArbitrator["Pay arbitrator separately"]
+  Ruling --> LocalDecision["Local settlement decision"]
+  LocalDecision -. "all signed policy and wallet witnesses pass" .-> ProviderSettlement["Optional provider settlement"]
+  LocalDecision --> PreserveRefusal["Preserve refusal and ruling evidence"]
 ```
 
 ## Status
@@ -30,10 +34,10 @@ No central process is authoritative for participant identity, negotiation, verif
 
 The first service is a deterministic coding task:
 
-| Field | Contract |
-|---|---|
-| Task | Make the supplied implementation pass the supplied tests |
-| Price | A tiny fixed USDt amount |
+| Field      | Contract                                                              |
+| ---------- | --------------------------------------------------------------------- |
+| Task       | Make the supplied implementation pass the supplied tests              |
+| Price      | A tiny fixed USDt amount                                              |
 | Acceptance | The named test command exits successfully against the delivered patch |
 
 The artifact is tangible, the verifier is objective, and successful verification can produce a typed payment authorization. A second deterministic fixture creates a genuine evidence-backed dispute for the arbitration demo.
@@ -51,7 +55,7 @@ See [Partner technology research](./docs/partner-technology-research.md) for ver
 
 1. Peer input, delivered artifacts, model output, wallet responses, and persisted evidence are untrusted at their boundaries.
 2. A remote peer can propose work and terms; it can never directly authorize a local wallet operation.
-3. Payment requires exact agreement, artifact, verification, policy, destination, asset, network, and amount witnesses.
+3. Payment requires the exact canonical tuple and evidence witnesses defined in [SPEC.md](./SPEC.md#economic-representation): source, destination, asset and token contract, network, integer atomic amount, native-fee cap, expiry, terms, artifact, verification, and policy.
 4. Monetary values use integer atomic units, never floating point.
 5. Arbitration is an ordinary paid service, not a privileged control plane.
 6. Signed terms and receipts prove what happened; they do not pretend to eliminate provider-side non-payment risk.
@@ -68,7 +72,6 @@ See [Partner technology research](./docs/partner-technology-research.md) for ver
 - [Partner technology research](./docs/partner-technology-research.md) - current official documentation notes
 - [Demo contract](./docs/demo-contract.md) - what judges must see and what may be prerecorded
 - [GitHub issues](https://github.com/0xgleb/agentopoly/issues) - PR-sized execution backlog
-- [Open questions](./docs/open-questions.md) - product decisions awaiting human or mentor input
 
 ## Explicit non-goals for the hackathon
 
@@ -79,9 +82,24 @@ See [Partner technology research](./docs/partner-technology-research.md) for ver
 - Mandatory use of any one agent harness or model provider
 - QVAC or x402 in the critical path
 
+## Development
+
+From a clean clone:
+
+```console
+direnv allow
+bun install --frozen-lockfile
+bun run check
+nix flake check --no-write-lock-file
+```
+
+`direnv` enters the pinned Nix shell. Bun is the only JavaScript package manager. `.env.example` documents variable names without values; no wallet process or secret-bearing integration starts during these quality checks.
+
 ## Build discipline
 
-1. Establish the Nix and GitButler tooling through [issue #1](https://github.com/0xgleb/agentopoly/issues/1).
-2. Write every runtime file and test as hackathon work.
-3. Use GitButler for every version-control write.
-4. Publish only verified claims and keep the foundation gates green.
+1. **Project behavior:** change the specification and one problem-only GitHub issue, write a compiling failing test, then implement the smallest vertical slice.
+2. **Reused input:** only attributable official sponsor or hackathon boilerplate may be reused; record its source and review every local modification. The judged Agentopoly protocol, wallet policy, and WDK integration remain project work.
+3. **Generated material:** lockfiles and build output must be reproducible from reviewed manifests and pinned Nix inputs; generated output is never edited as source.
+4. **Dependencies:** add or remove JavaScript packages only with Bun, review their authority boundary and lifecycle scripts, and commit the resulting lockfile.
+5. **Version control:** use GitButler for every repository write and keep each PR scoped to one linked issue.
+6. **Publication:** publish only verified claims after the focused tests and the authoritative gates in [CONTRIBUTING.md](./CONTRIBUTING.md#authoritative-quality-commands) pass.

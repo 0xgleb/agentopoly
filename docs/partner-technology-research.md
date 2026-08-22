@@ -16,14 +16,7 @@ The current CLI reference tracks Pear 3.2.0. `pear run` is removed in v3 and rep
 
 ### Architectural consequence
 
-Agentopoly should not build around `pear run` or a global Pear runtime API. Its P2P and OTA ownership belongs in a Bare worker. The browser or Telegram presentation layer must project local application state without replacing Hyperswarm as the economic transport.
-
-### Questions to verify with mentors
-
-- Whether the official boilerplate may be used directly under the event code rule.
-- Whether a seeded install plus visible OTA update is the expected submission evidence.
-- Whether multiple local processes satisfy P2P judging or a second device is expected.
-- How a browser projection should be packaged with the standalone Bare participant.
+Agentopoly does not build around `pear run` or a global Pear runtime API. Its P2P and OTA ownership belongs in a Bare worker. The local browser dashboard projects bounded application state without replacing Hyperswarm as the economic transport. Submission-evidence ambiguities are routed through the configured communication channel rather than tracked in repository documents.
 
 ### Sources
 
@@ -40,6 +33,8 @@ The WDK CLI MCP server exposes wallet operations over stdio and routes wallet-de
 
 Wallet administration is deliberately not exposed over MCP: create, import, export, unlock, lock, delete, rename, and default selection remain CLI/human operations. The wallet must already be unlocked.
 
+The installed official `@tetherto/wdk-cli` `1.0.0-beta.3` package uses MCP's `StdioServerTransport`, routes wallet operations to the daemon, and exposes structured `get_address`, `get_balance`, `get_history`, and `send_token` tools. Its `send_token` schema accepts an atomic-unit string with `baseUnits=true` and defaults `dryRun` to true.
+
 Security details are important:
 
 - on Unix-like systems, the user-scoped daemon socket separates OS users, not processes running as the same user;
@@ -52,12 +47,13 @@ Security details are important:
 
 The operator creates and unlocks a dedicated tiny-balance development wallet. Agentopoly must enforce its own exact, capped authorization and preview comparison before any broadcast. A peer never receives MCP or wallet access.
 
-The largest unresolved integration question is whether the standalone Bare participant calls the WDK CLI daemon through a narrow local adapter, uses a WDK SDK module compatible with Bare, or relies on a separate sidecar.
+The architecture selects a separate operator-local Node sidecar that launches the pinned WDK MCP server over stdio. Agentopoly's client will allow only fixed typed address, balance, history, and `send_token` calls and will route them to the human-unlocked WDK daemon. The standalone Bare worker remains wallet-blind.
 
 ### Sources
 
 - https://docs.wdk.tether.io/
 - https://docs.wdk.tether.io/cli/guides/use-mcp-server/
+- `@tetherto/wdk-cli@1.0.0-beta.3`: `package.json`, `src/mcp/server.js`, and `src/actions/send.js`
 
 ## QVAC
 
@@ -92,8 +88,8 @@ Official x402 integration documentation and a realistic response fixture must be
 
 ## Sponsor strategy
 
-Agentopoly will optimize for WDK CLI Track 1 because the economic loop and local wallet guardrails are core product behavior. Pear remains the second priority for independent peers and distribution. QVAC is a cherry-on-top only after the paid transaction and arbitration loops work. Enter the separate General Track too if cross-sponsor combination is allowed.
+Agentopoly enters WDK CLI Track 1 as its single Tether track and also enters the separate General Track; it does not enter multiple Tether tracks. The economic loop and local wallet guardrails are core product behavior, while Pear is essential to independent peers and distribution. QVAC is a post-core enhancement only after the paid transaction and arbitration loops work.
 
 ## Strongest integration risk
 
-The strongest counter-hypothesis to a clean all-in-one design is runtime incompatibility: Pear's judged artifact is a standalone Bare executable, while WDK CLI/MCP uses a local Node-backed daemon and the polished browser/Telegram projection may need an HTTP or bot adapter. The design must prove these can remain narrow local boundaries without undermining the standalone and P2P claims.
+The strongest counter-hypothesis to a clean all-in-one design is runtime incompatibility: Pear's judged artifact is a standalone Bare executable, while WDK CLI/MCP requires Node.js 22.18 or newer and the polished local browser projection needs a bounded host adapter. Agentopoly therefore does not claim an all-in-one process. Packaging and integration tests must prove that the wallet-blind participant, browser projection host, and operator-local settlement sidecar remain narrow local boundaries without undermining the standalone and P2P claims.

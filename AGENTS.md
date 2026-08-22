@@ -7,11 +7,11 @@ Rules for human and AI contributors. Every rule is a directive.
 Before changing behavior, read:
 
 1. [SPEC.md](./SPEC.md) for the behavior contract;
-2. [ROADMAP.md](./ROADMAP.md) and the active [GitHub issue](https://github.com/0xgleb/agentopoly/issues) for scope;
+2. [ROADMAP.md](./ROADMAP.md) and the active GitHub issue for scope ([issue #1](https://github.com/0xgleb/agentopoly/issues/1) for the current foundation PR);
 3. [docs/threat-model.md](./docs/threat-model.md) for trust boundaries and required abuse tests;
 4. [CONTRIBUTING.md](./CONTRIBUTING.md) for the delivery workflow.
 
-All repository, dependency, Nix, test, and application work must remain demonstrably hackathon work.
+All repository, dependency, Nix, test, and application work must remain demonstrably Agentopoly hackathon work. Attributable official sponsor or hackathon boilerplate may be reused after review; the judged protocol, wallet policy, and WDK integration remain Agentopoly work.
 
 ## Product invariants
 
@@ -89,7 +89,7 @@ Use semantic levels and bounded structured fields. Log completions and state tra
 
 ## Dependencies and environment
 
-After the event starts, all tools enter through the pinned Nix flake and `direnv`. Use Bun for JavaScript dependencies. Add or remove packages with Bun commands; never guess or manually type package versions. Review every new dependency for Bare compatibility, runtime assumptions, maintenance, license, install scripts, and transitive native code.
+All tools enter through the pinned Nix flake and `direnv`. Use Bun for JavaScript dependencies. Add or remove packages with Bun commands; never guess or manually type package versions. Review every new dependency for Bare compatibility, runtime assumptions, maintenance, license, install scripts, and transitive native code.
 
 Standalone scripts are Nushell, never Bash. Bash is allowed only for short inline CI blocks.
 

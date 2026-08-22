@@ -7,16 +7,15 @@ Status legend: `in progress`, `planned`, `stretch`.
 ## Foundation
 
 - [ ] [Foundation](https://github.com/0xgleb/agentopoly/issues/1) - `in progress`
-- [ ] [Resolve mentor and product questions](https://github.com/0xgleb/agentopoly/issues/18) - `planned`
 
-Exit gate: the docs agree, the local backlog is complete, partner assumptions are sourced, and unresolved choices are explicit.
+Exit gate: from a fresh clone, `direnv allow`, `bun install --frozen-lockfile`, `bun run check`, and `nix flake check --no-write-lock-file` succeed; the PR links issue #1; and README, specification, architecture, threat model, roadmap, dependency review, and issue scope agree.
 
 ## Checkpoint: an installable participant
 
 - [ ] [Run as a standalone Pear terminal participant](https://github.com/0xgleb/agentopoly/issues/2) - `planned`
 - [ ] [Show a polished judge experience](https://github.com/0xgleb/agentopoly/issues/14) - `planned`
 
-Exit gate: one participant starts, reports its identity and role, shuts down cleanly, has a credible path to a cross-platform standalone binary, and exposes a presentation projection suitable for the selected browser or Telegram surface.
+Exit gate: one participant starts, reports its identity and role, exposes a bounded browser projection containing the live agent and job registry, shuts down cleanly, and passes a standalone package smoke test on every declared target platform.
 
 ## Checkpoint: two peers find a market
 

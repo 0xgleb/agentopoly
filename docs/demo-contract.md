@@ -22,11 +22,13 @@ The story demonstrates an economy rather than merely a transfer: good agents gai
 
 ## Presentation requirements
 
-Terminal-only is not enough. The primary judge surface is a polished browser dashboard or Telegram miniapp; the interface decision is pending explicit human input.
+Terminal-only is not enough. The primary judge surface is a polished local browser dashboard. Its central view is a live registry of agents and jobs that makes marketplace activity and the agent economy observable in real time. A narrow typed command surface may let a human communicate with their own local agent; it never grants the dashboard wallet, transport, or trust authority. The CLI/TUI remains the fallback.
 
-It must make these facts legible without reading raw JSON:
+The dashboard must make these facts legible without reading raw JSON:
 
 - peers are independent identities;
+- agents advertise capabilities and availability in a live registry;
+- jobs and economic state transitions update in real time;
 - discovery happened over P2P transport;
 - price and terms were negotiated rather than hardcoded invisibly;
 - verification controls payment;
@@ -39,21 +41,31 @@ Recommended visual model:
 ```mermaid
 sequenceDiagram
   participant Buyer
-  participant Provider
+  participant Reliable as Reliable provider
+  participant Bad as Bad provider
   participant Arbitrator
-  Provider->>Buyer: Advertise capability
-  Buyer->>Provider: Request work
-  Provider->>Buyer: Bid
-  Buyer->>Provider: Sign agreement
-  Provider->>Provider: Execute
-  Provider->>Buyer: Deliver artifact
-  Buyer->>Buyer: Verify
-  Buyer->>Provider: Pay and issue receipt
-  Buyer->>Arbitrator: Open dispute
-  Arbitrator->>Buyer: Quote
-  Buyer->>Arbitrator: Submit evidence
-  Arbitrator->>Buyer: Deliver ruling
-  Buyer->>Arbitrator: Pay and issue receipt
+  Reliable->>Buyer: Advertise capability
+  Bad->>Buyer: Advertise competing capability
+  Buyer->>Reliable: Request first fixture and sign exact terms
+  Reliable->>Buyer: Deliver valid artifact
+  Buyer->>Buyer: Verify exact artifact: pass
+  Buyer->>Reliable: Pay provider and issue receipt
+  Buyer->>Bad: Request second fixture and sign exact terms
+  Bad->>Buyer: Deliver incorrect or adversarial artifact
+  Buyer->>Buyer: Verify exact artifact: fail
+  Buyer->>Buyer: Withhold bad-provider payment
+  Buyer->>Arbitrator: Request arbitration as a new paid job
+  Arbitrator->>Buyer: Quote arbitration terms
+  Buyer->>Arbitrator: Sign terms and submit bound evidence
+  Arbitrator->>Buyer: Deliver signed ruling
+  Buyer->>Buyer: Verify arbitration delivery
+  Buyer->>Arbitrator: Pay arbitrator and issue separate receipt
+  Buyer->>Buyer: Apply original signed policy to ruling
+  alt Every local settlement witness passes
+    Buyer->>Bad: Optional provider settlement and receipt
+  else Provider award not locally authorized
+    Buyer->>Buyer: Preserve refusal and ruling evidence
+  end
 ```
 
 Raw protocol messages, full process output, wallet details, and secret-bearing diagnostics stay behind bounded debug tooling and are never the default presentation.
@@ -96,7 +108,7 @@ The UI must turn a failure into useful evidence:
 - three-minute video with English captions where required;
 - architecture diagram;
 - uncut sponsor-integration evidence;
-- repository timeline proving event-time creation;
+- repository history containing only hackathon work;
 - README with exact clean-clone instructions;
 - direct sponsor integration permalinks;
 - disclosed limitations: no escrow, local—not global—reputation, provider non-payment risk, and optional QVAC/x402.

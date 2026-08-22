@@ -48,7 +48,8 @@
             ''
               cp -r ${self} source
               chmod -R u+w source
-              nixfmt --check source/flake.nix source/but.nix
+              nixfmt --check source/flake.nix
+              nixfmt --check source/but.nix
               touch $out
             '';
       }

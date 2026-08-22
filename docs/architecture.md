@@ -28,23 +28,31 @@ flowchart TD
   Worker --> Protocol
 ```
 
-Agentopoly adds two local boundaries without making them peer-authoritative:
+Agentopoly adds explicit local authority boundaries without making them peer-authoritative:
 
 ```mermaid
 flowchart TD
-  Projection["Judge-facing projection: browser or Telegram"]
-  Adapters["Local authority adapters: execution and wallet"]
+  Projection["Judge-facing local browser projection"]
   Commands["Read model and typed commands"]
   StateMachine["Application state machine"]
   Worker["Pear P2P worker"]
+  ExecutionIntent["Typed execution intent"]
+  ExecutionAdapter["Disposable execution adapter"]
+  SettlementIntent["Typed settlement intent"]
+  WalletPolicy["Local wallet policy"]
+  PaymentAuthorized["PaymentAuthorized"]
+  WDKAdapter["Operator-local WDK sidecar adapter"]
 
-  Projection --> Commands
-  Adapters --> StateMachine
-  Commands --> StateMachine
+  Projection --> Commands --> StateMachine
+  Worker --> StateMachine
   StateMachine --> Worker
+  StateMachine --> ExecutionIntent --> ExecutionAdapter
+  ExecutionAdapter --> StateMachine
+  StateMachine --> SettlementIntent --> WalletPolicy --> PaymentAuthorized --> WDKAdapter
+  WDKAdapter --> StateMachine
 ```
 
-The presentation layer renders projections and submits typed local commands. It never decides whether terms are valid, verification passed, or payment is authorized.
+The presentation layer renders projections and submits typed local commands. It never decides whether terms are valid, verification passed, or payment is authorized. The P2P worker can produce domain events but cannot reach execution or wallet capabilities directly.
 
 ## Component ownership
 
@@ -76,9 +84,11 @@ Maps an agreed acceptance contract to one reviewed local command and hashes the 
 
 Consumes parsed agreement and verification facts plus reviewed limits. It produces either a typed refusal or `PaymentAuthorized`. It has no P2P socket and never accepts a remote tool call directly.
 
-### WDK adapter
+### WDK settlement sidecar
 
-Reads the dedicated wallet, previews a transfer, compares preview fields to `PaymentAuthorized`, broadcasts once, and observes transaction history/state. Wallet administration remains human-owned.
+Runs under Node.js 22.18 or newer and launches the pinned `@tetherto/wdk-cli` `1.0.0-beta.3` MCP server over stdio. Its MCP client exposes only fixed typed calls to address, balance, history, and `send_token`; it cannot forward a tool name or arguments supplied by a peer, model, provider, or browser. The human owns wallet creation and unlock. The MCP server reaches the WDK daemon through its user-scoped Unix socket; the Pear worker receives neither socket access nor wallet capability.
+
+For settlement, the sidecar verifies the source address, obtains a base-unit dry-run preview, compares the exact authorized tuple and native-fee cap, atomically reserves the authorization key, broadcasts once, and reconciles history after an unknown result.
 
 ### Evidence store
 
@@ -86,7 +96,7 @@ Appends signed, hash-linked records. Corestore is the likely persistence substra
 
 ### Projection layer
 
-Derives peer, market, job, evidence, payment, reputation, and arbitration views. The browser or Telegram surface reads only these projections and sends typed commands back through a local API.
+Derives peer, market, job, evidence, payment, reputation, and arbitration views. The local browser dashboard reads only these projections and sends typed commands back through a bounded local API.
 
 ## Trust boundaries
 
@@ -97,7 +107,7 @@ flowchart TB
   VerificationProcess["Verification process"] --> Capture["Bounded exit and evidence capture"] --> Redaction["Evidence redaction"] --> VerificationResult["Verification domain result"]
   PaymentFacts["Verification, agreement, and wallet state"] --> WalletPolicy["Local wallet policy"] --> Preview["Exact WDK preview comparison"] --> Broadcast["One broadcast"]
   PersistedRecord["Persisted record"] --> PersistedDecode["Decode and invariant check"] --> ReplaySafe["Replay-safe state transition"]
-  UICommand["Browser or Telegram command"] --> LocalAuth["Local authentication and command schema"] --> Decision["State-machine decision"]
+  UICommand["Local browser command"] --> LocalAuth["Local authentication and command schema"] --> Decision["State-machine decision"]
 ```
 
 Nothing crossing one boundary is trusted merely because an earlier boundary accepted a related value.
@@ -106,7 +116,7 @@ Nothing crossing one boundary is trusted merely because an earlier boundary acce
 
 Each node has authoritative local state only for its own decisions and evidence. Signed counterparty statements can be verified but not rewritten. Job transitions are deterministic, explicit, and idempotent.
 
-The protocol requires correlation IDs and monotonic per-identity nonces, but does not require a total global order. Conflicting signed statements become evidence for refusal or dispute rather than a consensus problem.
+Protocol v1 keeps a durable nonce high-water mark for each `(sender identity, signing-key revision)`. It accepts only a nonce greater than the mark: gaps are allowed, while delayed or replayed lower values are rejected rather than reordered. Message ID, payload hash, result, and the new mark are persisted atomically before acknowledgement or side effects. A signed key revision starts an independent sequence. Networking stays closed on restart until this state validates. The protocol requires no total global order; conflicting signed statements become evidence for refusal or dispute rather than a consensus problem.
 
 ## Recursive arbitration
 
@@ -114,32 +124,39 @@ Arbitration reuses the normal service path:
 
 ```mermaid
 flowchart LR
-  FailedVerification["Original job fails verification"] --> DisputeBundle["Dispute bundle"] --> DiscoverArbitrator["Discover arbitration capability"] --> ArbitrationTerms["Request, bid, and signed terms"] --> Ruling["Signed ruling artifact"] --> VerifyRuling["Verify ruling contract"] --> PayArbitrator["Pay arbitrator"] --> ArbitrationReceipt["Arbitration receipt"]
+  FailedVerification["Original job fails verification"] --> WithholdProvider["Withhold provider payment"] --> DisputeBundle["Dispute bundle"] --> DiscoverArbitrator["Discover arbitration capability"] --> ArbitrationTerms["Request, bid, and signed terms"] --> Ruling["Signed ruling artifact"] --> VerifyRuling["Verify ruling contract"] --> PayArbitrator["Pay arbitrator"] --> ArbitrationReceipt["Arbitration receipt"]
+  VerifyRuling --> LocalSettlementDecision["Local settlement decision"]
+  LocalSettlementDecision -. "signed policy and every local witness pass" .-> ProviderSettlement["Optional provider settlement"]
+  LocalSettlementDecision --> PreserveRefusal["Preserve refusal and ruling evidence"]
 ```
 
-The original dispute and the arbitration job have different job IDs and receipts. Their evidence links are explicit.
+The original dispute and the arbitration job have different job IDs, payment authorizations, and receipts. Their evidence links are explicit. The original provider remains unpaid while the dispute is open. Paying the arbitrator cannot settle the original job, and a ruling cannot authorize any transfer unless the original signed policy and every local wallet witness permit it.
 
 ## Presentation architecture
 
 Presentation quality is a product requirement. The final judge experience is not terminal-only.
 
-Preferred current shape:
+Selected shape:
 
 - a local browser dashboard served from the buyer participant;
-- three visually distinct role lanes;
+- a live registry of agents, capabilities, availability, and jobs;
+- real-time marketplace and economic state transitions;
+- visually distinct buyer, provider, and arbitrator identities;
 - one economic timeline from discovery to receipt;
 - evidence and policy details available on demand;
 - an arbitration view that visibly creates a second paid job;
+- an optional narrow typed command surface for communication with the human's own local agent;
 - CLI/TUI fallback for operational recovery.
 
-A Telegram miniapp remains a viable alternative or secondary surface. Neither surface may become the P2P transport or trust authority.
+The dashboard is a projection and local command surface. It never becomes the P2P transport, trust authority, or wallet authority.
 
-## Unresolved integration constraints
+## Open implementation proofs
 
-1. Whether Effect and the chosen schema library are fully Bare-compatible.
-2. Whether WDK should be called through its CLI/MCP daemon, an SDK module, or a narrow sidecar.
-3. Whether the local browser projection server can live in the Bare host without Node compatibility.
-4. How TypeScript compiles and bundles into the standalone Bare executable.
-5. Which signature and canonical-serialization primitives have the smallest compatible dependency surface.
+1. Run a Bare import and bundle probe before adopting Effect or a schema library in worker code.
+2. Prove the pinned `wdk-mcp` stdio contract against captured real responses before implementing settlement policy.
+3. Prove whether the local browser projection server belongs in the Bare host or a separate wallet-blind host process.
+4. Select and test a bounded loopback transport for typed dashboard commands without expanding browser authority.
+5. Compile and package TypeScript into the standalone Bare executable on each target platform.
+6. Produce identical canonical bytes and signature fixtures in Bun and Bare.
 
-These constraints are research issues, not reasons to generalize the architecture before the first transaction.
+These are tracked compatibility proofs, not product questions or reasons to generalize the architecture before the first transaction.
