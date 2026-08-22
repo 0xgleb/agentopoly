@@ -22,7 +22,7 @@ Exit gate: one participant starts, reports its identity and role, exposes a boun
 ## Checkpoint: two peers find a market
 
 - [ ] [Define bounded signed protocol envelopes](https://github.com/0xgleb/agentopoly/issues/3) - `planned`
-- [ ] [Discover signed capability advertisements](https://github.com/0xgleb/agentopoly/issues/4) - `planned`
+- [ ] [Discover signed capability advertisements](https://github.com/0xgleb/agentopoly/issues/4) - `in progress`
 - [ ] [Reject malformed and replayed peer messages](https://github.com/0xgleb/agentopoly/issues/13) - `planned`
 
 Exit gate: two independent processes discover each other over Hyperswarm, exchange one valid capability advertisement, age it out, and visibly distinguish duplicate, conflicting-ID, expired, and replayed messages. Restart from a valid versioned snapshot preserves every result and high-water mark; corrupt, stale-writer, and interrupted-migration fixtures keep networking closed.

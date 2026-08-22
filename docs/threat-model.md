@@ -98,6 +98,8 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 - queue and peer caps refuse excess work without evicting accepted state;
 - rate-limit boundary accepts the twentieth frame and refuses the twenty-first in the same window;
 - compressed frame is rejected before decompression or payload allocation;
+- forged capability advertisements cannot create or overwrite a local market entry;
+- a replayed, duplicate, stale, withdrawn, or conflicting capability advertisement cannot revive or replace newer local market state;
 - unknown version and message type fail closed;
 - same semantic terms with different serialization cannot produce ambiguous hashes;
 - unsupported or corrupt persisted-record schema versions keep networking closed;
