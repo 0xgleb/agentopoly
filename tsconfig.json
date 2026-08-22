@@ -19,6 +19,6 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["index.ts", "participant/pear-runtime-module.d.ts"],
+  "include": ["index.ts", "participant/pear-runtime-module.d.ts", "protocol/**/*.ts"],
   "exclude": ["coverage", "dist", "node_modules"]
 }
