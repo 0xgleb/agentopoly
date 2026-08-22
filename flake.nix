@@ -21,6 +21,7 @@
         butPackages = import ./but.nix {
           inherit system but-nix;
         };
+        bareRuntime = pkgs.callPackage ./bare.nix { };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -33,6 +34,10 @@
               deadnix
               statix
               nushell
+              bareRuntime
+            ]
+            ++ pkgs.lib.optionals (pkgs.stdenv.hostPlatform.isDarwin && pkgs.stdenv.hostPlatform.isAarch64) [
+              bareRuntime
             ]
             ++ butPackages;
 
