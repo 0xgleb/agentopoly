@@ -8,12 +8,12 @@ Audit commands are evidence, not an assertion that a required sponsor beta is cl
 
 ## Runtime dependencies
 
-| Package                    | Locked version  | Boundary |
-| -------------------------- | --------------- | -------- |
-| `@tetherto/wdk`            | `1.0.0-beta.16` | Future local wallet adapter only; never remote wallet authority. |
-| `@tetherto/wdk-cli`        | `1.0.0-beta.3`  | Future operator-local sidecar only; never imported into the Pear worker or provider workspace. |
-| `hyperswarm`               | `4.17.0`        | Candidate P2P transport; network bytes remain untrusted until bounded decoding and signature admission. |
-| `pear-runtime`             | `1.3.1`         | Pear host and worker lifecycle; no wallet authority. |
+| Package             | Locked version  | Boundary                                                                                                |
+| ------------------- | --------------- | ------------------------------------------------------------------------------------------------------- |
+| `@tetherto/wdk`     | `1.0.0-beta.16` | Future local wallet adapter only; never remote wallet authority.                                        |
+| `@tetherto/wdk-cli` | `1.0.0-beta.3`  | Future operator-local sidecar only; never imported into the Pear worker or provider workspace.          |
+| `hyperswarm`        | `4.17.0`        | Candidate P2P transport; network bytes remain untrusted until bounded decoding and signature admission. |
+| `pear-runtime`      | `1.3.1`         | Pear host and worker lifecycle; no wallet authority.                                                    |
 
 ### WDK CLI intake
 
@@ -41,14 +41,17 @@ That package may simplify a future Bare integration, but it does not automatical
 
 ## Development tooling
 
-| Package             | Locked version | License    | Review |
-| ------------------- | -------------- | ---------- | ------ |
-| `typescript`        | `5.9.3`        | Apache-2.0 | Compiler only; supported by the pinned lint stack. |
-| `eslint`            | `10.9.0`       | MIT        | Node-only development and CI linter. |
-| `@eslint/js`        | `10.0.1`       | MIT        | Maintained JavaScript ruleset. |
-| `typescript-eslint` | `8.67.0`       | MIT        | Strict typed TypeScript lint rules. |
-| `prettier`          | `3.9.6`        | MIT        | Formatter only. |
-| `@types/bun`        | `1.4.0`        | MIT        | Test-only Bun declarations; runtime typechecking excludes Bun ambient types. |
+| Package             | Locked version | License    | Review                                                                       |
+| ------------------- | -------------- | ---------- | ---------------------------------------------------------------------------- |
+| `typescript`        | `5.9.3`        | Apache-2.0 | Compiler only; supported by the pinned lint stack.                           |
+| `eslint`            | `10.9.0`       | MIT        | Node-only development and CI linter.                                         |
+| `@eslint/js`        | `10.0.1`       | MIT        | Maintained JavaScript ruleset.                                               |
+| `typescript-eslint` | `8.67.0`       | MIT        | Strict typed TypeScript lint rules.                                          |
+| `prettier`          | `3.9.6`        | MIT        | Formatter only.                                                              |
+| `@types/bun`        | `1.4.0`        | MIT        | Test-only Bun declarations; runtime typechecking excludes ambient packages.  |
+| `@types/node`       | `26.2.0`       | MIT        | Type-only dependency required by Bun declarations; never a Node runtime pin. |
+
+`@types/node` `26.2.0` has no lifecycle scripts and depends only on `undici-types ~8.3.0`. The root runtime TypeScript config sets `types: []`, so Agentopoly production source cannot acquire Node globals from this package. Only the test config loads `bun`; Bun's declarations require the newer Node declaration surface. The exact `@types/bun`/`@types/node`/TypeScript combination compiles when TypeScript is launched by the pinned Node 22.23.2 development runtime, and the earlier quality-gate PR passed on CI Node 22.18.0 with the same resolved type pair.
 
 The reviewed direct development packages have no lifecycle install hooks. Their Node-oriented execution is reachable only through package scripts and CI, never from the Pear/Bare runtime module.
 
