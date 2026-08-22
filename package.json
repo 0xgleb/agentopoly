@@ -4,6 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "dev": "vite dashboard",
+    "build:dashboard": "bun run typecheck && vite build dashboard",
     "format": "prettier --check --ignore-unknown .",
     "format:write": "prettier --write --ignore-unknown .",
     "start": "bun run index.ts",
@@ -22,7 +24,8 @@
     "eslint": "^10.9.0",
     "prettier": "^3.9.6",
     "typescript": "5",
-    "typescript-eslint": "^8.67.0"
+    "typescript-eslint": "^8.67.0",
+    "vite": "^8.2.2"
   },
   "dependencies": {
     "@tetherto/wdk": "^1.0.0-beta.16",
