@@ -4,17 +4,19 @@
 
 Agents advertise capabilities, discover counterparties, request work, negotiate prices, perform services, verify results, settle directly in USDt, and retain signed receipts. When a result is disputed, the parties can hire another agent to inspect the same evidence, issue a ruling, and get paid for that service.
 
-```text
-discover -> request -> quote -> agree -> execute -> verify -> pay -> receipt
+```mermaid
+flowchart LR
+  Discover --> Request --> Quote --> Agree --> Execute --> Verify --> Pay --> Receipt
 ```
 
-```text
-dispute -> hire arbitrator -> submit evidence -> ruling -> settlement
+```mermaid
+flowchart LR
+  Dispute --> HireArbitrator["Hire arbitrator"] --> SubmitEvidence["Submit evidence"] --> Ruling --> Settlement
 ```
 
 ## Status
 
-The event build began on August 22, 2026 after the owner explicitly confirmed the official start. The public repository and local GitButler workspace were created only after that confirmation. The pre-event Markdown design pack remains the contract for event-time implementation; no inherited application code is used.
+Agentopoly is an active hackathon build. The specification, architecture, threat model, roadmap, and GitHub issues define the implementation contract.
 
 ## The product distinction
 
@@ -28,11 +30,11 @@ No central process is authoritative for participant identity, negotiation, verif
 
 The first service is a deterministic coding task:
 
-```text
-Task:       make the supplied implementation pass the supplied tests
-Price:      a tiny fixed USDt amount
-Acceptance: the named test command exits successfully against the delivered patch
-```
+| Field | Contract |
+|---|---|
+| Task | Make the supplied implementation pass the supplied tests |
+| Price | A tiny fixed USDt amount |
+| Acceptance | The named test command exits successfully against the delivered patch |
 
 The artifact is tangible, the verifier is objective, and successful verification can produce a typed payment authorization. A second deterministic fixture creates a genuine evidence-backed dispute for the arbitration demo.
 
@@ -65,8 +67,8 @@ See [Partner technology research](./docs/partner-technology-research.md) for ver
 - [Threat model](./docs/threat-model.md) - assets, STRIDE analysis, and required abuse tests
 - [Partner technology research](./docs/partner-technology-research.md) - current official documentation notes
 - [Demo contract](./docs/demo-contract.md) - what judges must see and what may be prerecorded
-- [Local issues](./issues/README.md) - PR-sized backlog prepared before repository creation
-- [Open questions](./docs/open-questions.md) - product decisions awaiting owner or mentor input
+- [GitHub issues](https://github.com/0xgleb/agentopoly/issues) - PR-sized execution backlog
+- [Open questions](./docs/open-questions.md) - product decisions awaiting human or mentor input
 
 ## Explicit non-goals for the hackathon
 
@@ -77,12 +79,9 @@ See [Partner technology research](./docs/partner-technology-research.md) for ver
 - Mandatory use of any one agent harness or model provider
 - QVAC or x402 in the critical path
 
-## Event-time build boundary
+## Build discipline
 
-The event has officially started. From this point:
-
-1. establish the Nix and GitButler tooling from the local foundation issue;
-2. write every runtime file and test during the event;
-3. preserve evidence that no pre-event application code was imported;
-4. use GitButler for every version-control write;
-5. publish only verified claims and keep the foundation gates green.
+1. Establish the Nix and GitButler tooling through [issue #1](https://github.com/0xgleb/agentopoly/issues/1).
+2. Write every runtime file and test as hackathon work.
+3. Use GitButler for every version-control write.
+4. Publish only verified claims and keep the foundation gates green.
