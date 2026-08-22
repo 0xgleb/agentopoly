@@ -201,6 +201,8 @@ Each node owns local append-only evidence. Hash-linked records connect terms, de
 
 Reputation is a local projection over verifiable receipts and rulings. It reports evidence counts and counterparties; it does not claim a globally canonical score.
 
+The deterministic browser-demo adapter may replay only repository-owned recorded fixtures, and every resulting projection is labeled `recorded-fixture`. It has no wallet, WDK, shell, or provider capability. A job projects `paid` only after an exact receipt event matches the job, agreement, verification, beneficiary, destination, asset, network, and integer atomic amount. A failed verification keeps provider payment withheld; a separate arbitration receipt cannot change that status.
+
 ## Lifecycle
 
 ```mermaid

@@ -152,7 +152,10 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 - local browser client cannot call WDK directly;
 - stale projection is visibly stale and cannot authorize a command;
 - redacted evidence cannot be expanded by a client query;
-- debug protocol payloads are not exposed in the default judge view.
+- debug protocol payloads are not exposed in the default judge view;
+- recorded demo fixtures are labeled and cannot mint live payment authorization;
+- cross-job or mismatched receipt evidence cannot project a provider as paid;
+- an arbitration receipt cannot be reused as the original provider payment.
 
 ## Supply-chain gates
 
