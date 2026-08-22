@@ -1,0 +1,16 @@
+# Dependencies and generated outputs
+node_modules/
+dist/
+coverage/
+
+# Local environment and runtime state
+.env
+.env.*
+!.env.example
+.direnv/
+.tmp/
+.worktrees/
+
+# Platform and editor noise
+.DS_Store
+*.swp
