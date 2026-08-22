@@ -3,11 +3,26 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
-  "devDependencies": {
-    "@types/bun": "latest"
+  "scripts": {
+    "format": "prettier --check --ignore-unknown .",
+    "format:write": "prettier --write --ignore-unknown .",
+    "start": "bun run index.ts",
+    "lint": "eslint .",
+    "typecheck:runtime": "tsc --noEmit",
+    "typecheck": "bun run typecheck:runtime && tsc --project test/tsconfig.json",
+    "test:unit": "bun test --timeout 10000 test/unit",
+    "test:integration": "bun test --timeout 30000 test/integration",
+    "test": "bun run test:unit && bun run test:integration",
+    "build": "bun build --target=browser --outdir=dist index.ts",
+    "check": "bun run format && bun run lint && bun run typecheck && bun run test && bun run build"
   },
-  "peerDependencies": {
-    "typescript": "^5"
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/bun": "^1.4.0",
+    "eslint": "^10.9.0",
+    "prettier": "^3.9.6",
+    "typescript": "5",
+    "typescript-eslint": "^8.67.0"
   },
   "dependencies": {
     "@tetherto/wdk": "^1.0.0-beta.16",

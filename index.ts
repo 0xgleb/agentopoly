@@ -1,1 +1,1 @@
-export const packageName = "agentopoly" as const;
+export const packageName = 'agentopoly' as const;
