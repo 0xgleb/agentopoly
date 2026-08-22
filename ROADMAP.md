@@ -2,13 +2,15 @@
 
 This roadmap is ordered by demo value and integration risk. Each checkpoint leaves one coherent transaction more presentable than before.
 
-Status legend: `in progress`, `planned`, `stretch`.
+Status legend: `complete`, `in progress`, `planned`, `stretch`.
 
 ## Foundation
 
-- [ ] [Foundation](https://github.com/0xgleb/agentopoly/issues/1) - `in progress`
+- [x] [Establish the foundation](https://github.com/0xgleb/agentopoly/issues/1) - `complete`
+- [ ] [Restore reproducible Bun quality gates and pinned CI](https://github.com/0xgleb/agentopoly/issues/20) - `in progress`
+- [ ] [Remove ambiguity from foundation boundary contracts](https://github.com/0xgleb/agentopoly/issues/22) - `in progress`
 
-Exit gate: from a fresh clone, `direnv allow`, `bun install --frozen-lockfile`, `bun run check`, and `nix flake check --no-write-lock-file` succeed; the PR links issue #1; and README, specification, architecture, threat model, roadmap, dependency review, and issue scope agree.
+Exit gate: from a fresh clone, `direnv allow`, `bun install --frozen-lockfile`, `bun run check`, and `nix flake check --no-write-lock-file` succeed; each foundation PR closes its problem-only issue; and README, specification, architecture, threat model, roadmap, dependency review, and issue scope agree.
 
 ## Checkpoint: an installable participant
 
@@ -23,7 +25,7 @@ Exit gate: one participant starts, reports its identity and role, exposes a boun
 - [ ] [Discover signed capability advertisements](https://github.com/0xgleb/agentopoly/issues/4) - `planned`
 - [ ] [Reject malformed and replayed peer messages](https://github.com/0xgleb/agentopoly/issues/13) - `planned`
 
-Exit gate: two independent processes discover each other over Hyperswarm, exchange one valid capability advertisement, age it out, and visibly reject an invalid or replayed message.
+Exit gate: two independent processes discover each other over Hyperswarm, exchange one valid capability advertisement, age it out, and visibly distinguish duplicate, conflicting-ID, expired, and replayed messages. Restart from a valid versioned snapshot preserves every result and high-water mark; corrupt, stale-writer, and interrupted-migration fixtures keep networking closed.
 
 ## Checkpoint: agents agree on work
 
@@ -44,7 +46,7 @@ Exit gate: the provider delivers a patch from an isolated fixture workspace and 
 - [ ] [Settle a verified job in USDt](https://github.com/0xgleb/agentopoly/issues/9) - `planned`
 - [ ] [Retain receipts and derive local reputation](https://github.com/0xgleb/agentopoly/issues/10) - `planned`
 
-Exit gate: a tiny transfer is previewed and, according to the selected local policy, broadcast only for the exact verified agreement. A receipt links terms, evidence, and transaction state.
+Exit gate: a tiny transfer is previewed and, according to the selected local policy, broadcast only from a matching durable reserved attempt for the exact verified agreement. A receipt links terms, evidence, and transaction state; any ambiguous post-invocation result remains reserved without tuple-based attribution, release, or retry.
 
 ## Checkpoint: the economy resolves a dispute
 

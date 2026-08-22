@@ -37,7 +37,7 @@
             ++ butPackages;
 
           shellHook = ''
-            export AGENTOPOLY_REPOSITORY_ROOT="$PWD"
+            export AGENTOPOLY_REPOSITORY_ROOT="$(${pkgs.git}/bin/git rev-parse --show-toplevel)"
           '';
         };
 
