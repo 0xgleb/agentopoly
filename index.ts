@@ -9,8 +9,6 @@ export {
   RuntimeVersion,
 } from "./participant/participant.ts"
 export type {
-  DisplayName,
-  FailureReason,
   IdentitySourceFailure,
   InvalidConfigFailure,
   InvalidPersistedStateFailure,
@@ -24,7 +22,6 @@ export type {
   ParticipantStateStore,
   ParticipantStoppedFailure,
   ParticipantWorker,
-  RuntimeVersion,
   StateStoreFailure,
   WorkerShutdownFailure,
   WorkerStartFailure,

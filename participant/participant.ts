@@ -1,69 +1,102 @@
+import * as Brand from "effect/Brand"
+import * as Effect from "effect/Effect"
+
 export type ParticipantRole = "buyer" | "provider" | "arbitrator"
 
+export type DisplayName = string & Brand.Brand<"DisplayName">
+export const DisplayName = Brand.refined<DisplayName>(
+  (value) => value.trim().length > 0 && value.length <= 80,
+  () => Brand.error("displayName must be a non-empty string"),
+)
+
+export type ParticipantIdentity = string & Brand.Brand<"ParticipantIdentity">
+export const ParticipantIdentity = Brand.refined<ParticipantIdentity>(
+  (value) => value.trim().length > 0 && value.length <= 256,
+  () => Brand.error("identity must be a non-empty public identifier"),
+)
+
+export type RuntimeVersion = string & Brand.Brand<"RuntimeVersion">
+export const RuntimeVersion = Brand.refined<RuntimeVersion>(
+  (value) => value.trim().length > 0 && value.length <= 32,
+  () => Brand.error("runtimeVersion must be a non-empty string"),
+)
+
+export type FailureReason = string & Brand.Brand<"FailureReason">
+export const FailureReason = Brand.nominal<FailureReason>()
+
 export type ParticipantProjection = Readonly<{
-  readonly displayName: string
+  readonly displayName: DisplayName
   readonly health: "ready"
-  readonly identity: string
+  readonly identity: ParticipantIdentity
   readonly role: ParticipantRole
-  readonly runtimeVersion: string
+  readonly runtimeVersion: RuntimeVersion
 }>
 
 export type ParticipantState = Readonly<{
-  readonly identity: string
+  readonly identity: ParticipantIdentity
 }>
 
-export type ParticipantStateStore = Readonly<{
-  readonly load: () => Promise<unknown>
-  readonly save: (state: ParticipantState) => Promise<void>
+export type InvalidConfigFailure = Readonly<{
+  readonly _tag: "invalid-config"
+  readonly reason: FailureReason
 }>
 
-export type ParticipantIdentitySource = Readonly<{
-  readonly create: () => Promise<string>
+export type InvalidPersistedStateFailure = Readonly<{
+  readonly _tag: "invalid-persisted-state"
+  readonly reason: FailureReason
 }>
 
-export type WorkerStartResult =
-  | Readonly<{ readonly _tag: "success" }>
-  | Readonly<{
-      readonly _tag: "failure"
-      readonly reason: string
-    }>
+export type StateStoreFailure = Readonly<{
+  readonly _tag: "state-store-failed"
+  readonly reason: FailureReason
+}>
 
-export type ParticipantWorker = Readonly<{
-  readonly start: () => Promise<WorkerStartResult>
-  readonly shutdown: () => Promise<void>
+export type IdentitySourceFailure = Readonly<{
+  readonly _tag: "identity-source-failed"
+  readonly reason: FailureReason
+}>
+
+export type WorkerStartFailure = Readonly<{
+  readonly _tag: "worker-start-failed"
+  readonly reason: FailureReason
+}>
+
+export type WorkerShutdownFailure = Readonly<{
+  readonly _tag: "worker-shutdown-failed"
+  readonly reason: FailureReason
+}>
+
+export type ParticipantStoppedFailure = Readonly<{
+  readonly _tag: "participant-stopped"
+  readonly reason: FailureReason
 }>
 
 export type ParticipantFailure =
-  | Readonly<{
-      readonly _tag: "invalid-config"
-      readonly reason: string
-    }>
-  | Readonly<{
-      readonly _tag: "invalid-persisted-state"
-      readonly reason: string
-    }>
-  | Readonly<{
-      readonly _tag: "worker-start-failed"
-      readonly reason: string
-    }>
-  | Readonly<{
-      readonly _tag: "participant-stopped"
-      readonly reason: string
-    }>
+  | InvalidConfigFailure
+  | InvalidPersistedStateFailure
+  | StateStoreFailure
+  | IdentitySourceFailure
+  | WorkerStartFailure
+  | WorkerShutdownFailure
+  | ParticipantStoppedFailure
 
-export type StartupResult =
-  | Readonly<{
-      readonly _tag: "success"
-      readonly value: ParticipantProjection
-    }>
-  | Readonly<{
-      readonly _tag: "failure"
-      readonly error: ParticipantFailure
-    }>
+export type ParticipantStateStore = Readonly<{
+  readonly load: Effect.Effect<unknown, StateStoreFailure>
+  readonly save: (state: ParticipantState) => Effect.Effect<void, StateStoreFailure>
+}>
+
+export type ParticipantIdentitySource = Readonly<{
+  readonly create: Effect.Effect<ParticipantIdentity, IdentitySourceFailure>
+}>
+
+export type ParticipantWorker = Readonly<{
+  readonly start: Effect.Effect<void, WorkerStartFailure>
+  readonly shutdown: Effect.Effect<void, WorkerShutdownFailure>
+}>
 
 export type Participant = Readonly<{
-  readonly start: () => Promise<StartupResult>
-  readonly shutdown: () => Promise<void>
+  readonly start: () => Effect.Effect<ParticipantProjection, ParticipantFailure>
+  readonly shutdown: () => Effect.Effect<void, WorkerShutdownFailure>
 }>
 
 export type ParticipantDependencies = Readonly<{
@@ -74,16 +107,13 @@ export type ParticipantDependencies = Readonly<{
 }>
 
 type ParticipantConfig = Readonly<{
-  readonly displayName: string
+  readonly displayName: DisplayName
   readonly role: ParticipantRole
-  readonly runtimeVersion: string
+  readonly runtimeVersion: RuntimeVersion
 }>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
-
-const isNonEmptyString = (value: unknown, maximumLength: number): value is string =>
-  typeof value === "string" && value.trim().length > 0 && value.length <= maximumLength
 
 const parseRole = (value: unknown): ParticipantRole | undefined => {
   if (value === "buyer" || value === "provider" || value === "arbitrator") {
@@ -93,9 +123,24 @@ const parseRole = (value: unknown): ParticipantRole | undefined => {
   return undefined
 }
 
-const parseConfig = (value: unknown): ParticipantConfig | ParticipantFailure => {
+const invalidConfig = (reason: string): InvalidConfigFailure => ({
+  _tag: "invalid-config",
+  reason: FailureReason(reason),
+})
+
+const invalidPersistedState = (reason: string): InvalidPersistedStateFailure => ({
+  _tag: "invalid-persisted-state",
+  reason: FailureReason(reason),
+})
+
+const stopped = (): ParticipantStoppedFailure => ({
+  _tag: "participant-stopped",
+  reason: FailureReason("participant was shut down before becoming ready"),
+})
+
+const parseConfig = (value: unknown): Effect.Effect<ParticipantConfig, InvalidConfigFailure> => {
   if (!isRecord(value)) {
-    return { _tag: "invalid-config", reason: "configuration must be an object" }
+    return Effect.fail(invalidConfig("configuration must be an object"))
   }
 
   const hasOnlyKnownFields = Object.keys(value).every(
@@ -103,140 +148,111 @@ const parseConfig = (value: unknown): ParticipantConfig | ParticipantFailure => 
   )
 
   if (!hasOnlyKnownFields) {
-    return { _tag: "invalid-config", reason: "configuration has unknown fields" }
+    return Effect.fail(invalidConfig("configuration has unknown fields"))
   }
 
-  if (!isNonEmptyString(value.displayName, 80)) {
-    return { _tag: "invalid-config", reason: "displayName must be a non-empty string" }
+  if (typeof value.displayName !== "string" || !DisplayName.is(value.displayName)) {
+    return Effect.fail(invalidConfig("displayName must be a non-empty string"))
   }
 
   const role = parseRole(value.role)
 
   if (role === undefined) {
-    return { _tag: "invalid-config", reason: "role must be buyer, provider, or arbitrator" }
+    return Effect.fail(invalidConfig("role must be buyer, provider, or arbitrator"))
   }
 
-  if (!isNonEmptyString(value.runtimeVersion, 32)) {
-    return { _tag: "invalid-config", reason: "runtimeVersion must be a non-empty string" }
+  if (typeof value.runtimeVersion !== "string" || !RuntimeVersion.is(value.runtimeVersion)) {
+    return Effect.fail(invalidConfig("runtimeVersion must be a non-empty string"))
   }
 
-  return {
-    displayName: value.displayName,
+  return Effect.succeed({
+    displayName: DisplayName(value.displayName),
     role,
-    runtimeVersion: value.runtimeVersion,
-  }
+    runtimeVersion: RuntimeVersion(value.runtimeVersion),
+  })
 }
 
-const parsePersistedState = (value: unknown): ParticipantState | ParticipantFailure | undefined => {
+const parsePersistedState = (
+  value: unknown,
+): Effect.Effect<ParticipantState | undefined, InvalidPersistedStateFailure> => {
   if (value === undefined) {
-    return undefined
+    return Effect.succeed(undefined)
   }
 
   if (
     !isRecord(value) ||
     Object.keys(value).length !== 1 ||
-    !isNonEmptyString(value.identity, 256)
+    typeof value.identity !== "string" ||
+    !ParticipantIdentity.is(value.identity)
   ) {
-    return {
-      _tag: "invalid-persisted-state",
-      reason: "identity must be a non-empty public identifier",
-    }
+    return Effect.fail(invalidPersistedState("identity must be a non-empty public identifier"))
   }
 
-  return { identity: value.identity }
+  return Effect.succeed({ identity: ParticipantIdentity(value.identity) })
 }
-
-const isFailure = (
-  value: ParticipantConfig | ParticipantState | ParticipantFailure,
-): value is ParticipantFailure => "_tag" in value
-
-const stoppedResult = (): StartupResult => ({
-  _tag: "failure",
-  error: {
-    _tag: "participant-stopped",
-    reason: "participant was shut down before becoming ready",
-  },
-})
 
 export const createParticipant = (dependencies: ParticipantDependencies): Participant => {
   let workerWasStarted = false
-  let shutdownPromise: Promise<void> | undefined
-  let startPromise: Promise<StartupResult> | undefined
+  let shutdownStarted = false
+  let startStarted = false
 
-  const shutdown = (): Promise<void> => {
-    if (shutdownPromise !== undefined) {
-      return shutdownPromise
-    }
-
-    shutdownPromise = workerWasStarted ? dependencies.worker.shutdown() : Promise.resolve()
-    return shutdownPromise
-  }
-
-  const start = (): Promise<StartupResult> => {
-    if (startPromise !== undefined) {
-      return startPromise
-    }
-
-    if (shutdownPromise !== undefined) {
-      return Promise.resolve(stoppedResult())
-    }
-
-    startPromise = (async (): Promise<StartupResult> => {
-      const config = parseConfig(dependencies.config)
-
-      if (isFailure(config)) {
-        return { _tag: "failure", error: config }
+  const shutdown = (): Effect.Effect<void, WorkerShutdownFailure> =>
+    Effect.suspend(() => {
+      if (shutdownStarted) {
+        return Effect.void
       }
 
-      const persistedState = parsePersistedState(await dependencies.stateStore.load())
+      shutdownStarted = true
+      return workerWasStarted ? dependencies.worker.shutdown : Effect.void
+    })
 
-      if (persistedState !== undefined && isFailure(persistedState)) {
-        return { _tag: "failure", error: persistedState }
+  const start = (): Effect.Effect<ParticipantProjection, ParticipantFailure> =>
+    Effect.suspend(() => {
+      if (startStarted || shutdownStarted) {
+        return Effect.fail(stopped())
       }
 
-      if (shutdownPromise !== undefined) {
-        return stoppedResult()
-      }
+      startStarted = true
 
-      const identity = persistedState?.identity ?? (await dependencies.identitySource.create())
+      return Effect.gen(function* () {
+        const config = yield* parseConfig(dependencies.config)
+        const persistedState = yield* Effect.flatMap(
+          dependencies.stateStore.load,
+          parsePersistedState,
+        )
 
-      if (persistedState === undefined) {
-        await dependencies.stateStore.save({ identity })
-      }
-
-      if (shutdownPromise !== undefined) {
-        return stoppedResult()
-      }
-
-      workerWasStarted = true
-      const workerStart = await dependencies.worker.start()
-
-      if (workerStart._tag === "failure") {
-        await shutdown()
-        return {
-          _tag: "failure",
-          error: { _tag: "worker-start-failed", reason: workerStart.reason },
+        if (shutdownStarted) {
+          return yield* Effect.fail(stopped())
         }
-      }
 
-      if (shutdownPromise !== undefined) {
-        return stoppedResult()
-      }
+        const identity = persistedState?.identity ?? (yield* dependencies.identitySource.create)
 
-      return {
-        _tag: "success",
-        value: {
+        if (persistedState === undefined) {
+          yield* dependencies.stateStore.save({ identity })
+        }
+
+        if (shutdownStarted) {
+          return yield* Effect.fail(stopped())
+        }
+
+        workerWasStarted = true
+        yield* Effect.catchAll(dependencies.worker.start, (failure) =>
+          Effect.zipRight(shutdown(), Effect.fail(failure)),
+        )
+
+        if (shutdownStarted) {
+          return yield* Effect.fail(stopped())
+        }
+
+        return {
           displayName: config.displayName,
           health: "ready",
           identity,
           role: config.role,
           runtimeVersion: config.runtimeVersion,
-        },
-      }
-    })()
-
-    return startPromise
-  }
+        }
+      })
+    })
 
   return { start, shutdown }
 }

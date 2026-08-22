@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test"
+import * as Either from "effect/Either"
+import * as Effect from "effect/Effect"
 
-import { createParticipant, type WorkerStartResult } from "./participant.ts"
+import {
+  createParticipant,
+  DisplayName,
+  FailureReason,
+  ParticipantIdentity,
+  RuntimeVersion,
+  type WorkerStartFailure,
+} from "./participant.ts"
 
 type LifecycleObservation = {
   identityCreates: number
@@ -15,10 +24,20 @@ const validConfig = {
   runtimeVersion: "1.3.1",
 }
 
+const expectFailure = async <A>(effect: Effect.Effect<A, unknown>, failure: unknown) => {
+  const result = await Effect.runPromise(Effect.either(effect))
+
+  expect(Either.isLeft(result)).toBe(true)
+
+  if (Either.isLeft(result)) {
+    expect(result.left).toEqual(failure)
+  }
+}
+
 const createHarness = (
   config: unknown,
   persistedState: unknown,
-  startWorker: () => Promise<WorkerStartResult> = async () => ({ _tag: "success" }),
+  startWorker: Effect.Effect<void, WorkerStartFailure> = Effect.void,
 ) => {
   const observation: LifecycleObservation = {
     identityCreates: 0,
@@ -30,25 +49,28 @@ const createHarness = (
   const participant = createParticipant({
     config,
     identitySource: {
-      create: async () => {
+      create: Effect.sync(() => {
         observation.identityCreates += 1
-        return "participant-public-key"
-      },
+        return ParticipantIdentity("participant-public-key")
+      }),
     },
     stateStore: {
-      load: async () => persistedState,
-      save: async () => {
-        observation.savedStates += 1
-      },
+      load: Effect.succeed(persistedState),
+      save: () =>
+        Effect.sync(() => {
+          observation.savedStates += 1
+        }),
     },
     worker: {
-      start: async () => {
-        observation.workerStarts += 1
-        return startWorker()
-      },
-      shutdown: async () => {
+      start: Effect.zipRight(
+        Effect.sync(() => {
+          observation.workerStarts += 1
+        }),
+        startWorker,
+      ),
+      shutdown: Effect.sync(() => {
         observation.workerShutdowns += 1
-      },
+      }),
     },
   })
 
@@ -59,17 +81,14 @@ describe("participant lifecycle", () => {
   test("starts a participant with its public identity and role projection", async () => {
     const { observation, participant } = createHarness(validConfig, undefined)
 
-    const result = await participant.start()
+    const result = await Effect.runPromise(participant.start())
 
     expect(result).toEqual({
-      _tag: "success",
-      value: {
-        displayName: "Reliable provider",
-        health: "ready",
-        identity: "participant-public-key",
-        role: "provider",
-        runtimeVersion: "1.3.1",
-      },
+      displayName: DisplayName("Reliable provider"),
+      health: "ready",
+      identity: ParticipantIdentity("participant-public-key"),
+      role: "provider",
+      runtimeVersion: RuntimeVersion("1.3.1"),
     })
     expect(observation.savedStates).toBe(1)
   })
@@ -79,17 +98,14 @@ describe("participant lifecycle", () => {
       identity: "persisted-public-key",
     })
 
-    const result = await participant.start()
+    const result = await Effect.runPromise(participant.start())
 
     expect(result).toEqual({
-      _tag: "success",
-      value: {
-        displayName: "Reliable provider",
-        health: "ready",
-        identity: "persisted-public-key",
-        role: "provider",
-        runtimeVersion: "1.3.1",
-      },
+      displayName: DisplayName("Reliable provider"),
+      health: "ready",
+      identity: ParticipantIdentity("persisted-public-key"),
+      role: "provider",
+      runtimeVersion: RuntimeVersion("1.3.1"),
     })
     expect(observation).toEqual({
       identityCreates: 0,
@@ -105,14 +121,9 @@ describe("participant lifecycle", () => {
       undefined,
     )
 
-    const result = await participant.start()
-
-    expect(result).toEqual({
-      _tag: "failure",
-      error: {
-        _tag: "invalid-config",
-        reason: "role must be buyer, provider, or arbitrator",
-      },
+    await expectFailure(participant.start(), {
+      _tag: "invalid-config",
+      reason: "role must be buyer, provider, or arbitrator",
     })
     expect(observation).toEqual({
       identityCreates: 0,
@@ -122,17 +133,37 @@ describe("participant lifecycle", () => {
     })
   })
 
+  test("returns a typed failure when the persisted-state boundary fails", async () => {
+    const participant = createParticipant({
+      config: validConfig,
+      identitySource: {
+        create: Effect.succeed(ParticipantIdentity("participant-public-key")),
+      },
+      stateStore: {
+        load: Effect.fail({
+          _tag: "state-store-failed",
+          reason: FailureReason("state unavailable"),
+        }),
+        save: () => Effect.void,
+      },
+      worker: {
+        start: Effect.void,
+        shutdown: Effect.void,
+      },
+    })
+
+    await expectFailure(participant.start(), {
+      _tag: "state-store-failed",
+      reason: "state unavailable",
+    })
+  })
+
   test("fails closed on malformed persisted state without starting a worker", async () => {
     const { observation, participant } = createHarness(validConfig, { identity: 17 })
 
-    const result = await participant.start()
-
-    expect(result).toEqual({
-      _tag: "failure",
-      error: {
-        _tag: "invalid-persisted-state",
-        reason: "identity must be a non-empty public identifier",
-      },
+    await expectFailure(participant.start(), {
+      _tag: "invalid-persisted-state",
+      reason: "identity must be a non-empty public identifier",
     })
     expect(observation.workerStarts).toBe(0)
   })
@@ -141,20 +172,15 @@ describe("participant lifecycle", () => {
     const { observation, participant } = createHarness(
       validConfig,
       undefined,
-      async () => ({
-        _tag: "failure",
-        reason: "worker did not become ready",
+      Effect.fail({
+        _tag: "worker-start-failed",
+        reason: FailureReason("worker did not become ready"),
       }),
     )
 
-    const result = await participant.start()
-
-    expect(result).toEqual({
-      _tag: "failure",
-      error: {
-        _tag: "worker-start-failed",
-        reason: "worker did not become ready",
-      },
+    await expectFailure(participant.start(), {
+      _tag: "worker-start-failed",
+      reason: "worker did not become ready",
     })
     expect(observation.workerShutdowns).toBe(1)
   })
@@ -162,14 +188,11 @@ describe("participant lifecycle", () => {
   test("does not start a participant after shutdown", async () => {
     const { observation, participant } = createHarness(validConfig, undefined)
 
-    await participant.shutdown()
+    await Effect.runPromise(participant.shutdown())
 
-    expect(await participant.start()).toEqual({
-      _tag: "failure",
-      error: {
-        _tag: "participant-stopped",
-        reason: "participant was shut down before becoming ready",
-      },
+    await expectFailure(participant.start(), {
+      _tag: "participant-stopped",
+      reason: "participant was shut down before becoming ready",
     })
     expect(observation.workerStarts).toBe(0)
   })
@@ -177,8 +200,11 @@ describe("participant lifecycle", () => {
   test("shuts down exactly once when shutdown is requested repeatedly", async () => {
     const { observation, participant } = createHarness(validConfig, undefined)
 
-    await participant.start()
-    await Promise.all([participant.shutdown(), participant.shutdown()])
+    await Effect.runPromise(participant.start())
+    await Promise.all([
+      Effect.runPromise(participant.shutdown()),
+      Effect.runPromise(participant.shutdown()),
+    ])
 
     expect(observation.workerShutdowns).toBe(1)
   })

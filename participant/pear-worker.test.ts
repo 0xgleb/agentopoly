@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test"
+import * as Effect from "effect/Effect"
 
-import { createPearWorker, type PearRuntime, type PearSidecar } from "./pear-worker.ts"
+import {
+  BareWorkerEntrypoint,
+  createPearWorker,
+  PearDataDirectory,
+  type PearRuntime,
+  type PearRuntimeFactory,
+  type PearSidecar,
+} from "./pear-worker.ts"
 
 const createReadySidecar = () => {
   let dataListener: ((data: Uint8Array) => void) | undefined
@@ -35,7 +43,7 @@ describe("Pear worker boundary", () => {
     let workerEntrypoint = ""
     let runtimeDirectory = ""
 
-    const createRuntime = (options: Readonly<{ readonly dir: string }>): PearRuntime => {
+    const createRuntime: PearRuntimeFactory = (options): PearRuntime => {
       runtimeDirectory = options.dir
 
       return {
@@ -55,14 +63,14 @@ describe("Pear worker boundary", () => {
 
     const worker = createPearWorker(
       {
-        dataDirectory: "/local/participant-data",
-        workerEntrypoint: "participant/worker.js",
+        dataDirectory: PearDataDirectory("/local/participant-data"),
+        workerEntrypoint: BareWorkerEntrypoint("participant/worker.js"),
       },
       createRuntime,
     )
 
-    expect(await worker.start()).toEqual({ _tag: "success" })
-    await Promise.all([worker.shutdown(), worker.shutdown()])
+    await Effect.runPromise(worker.start)
+    await Promise.all([Effect.runPromise(worker.shutdown), Effect.runPromise(worker.shutdown)])
 
     expect(readyCalls).toBe(1)
     expect(workerEntrypoint).toBe("participant/worker.js")
@@ -71,7 +79,7 @@ describe("Pear worker boundary", () => {
     expect(closed).toBe(1)
   })
 
-  test("fails startup when the Bare worker closes before readiness", async () => {
+  test("returns a typed failure when the Bare worker closes before readiness", async () => {
     const fakeSidecar = createReadySidecar()
 
     const createRuntime = (): PearRuntime => ({
@@ -85,15 +93,20 @@ describe("Pear worker boundary", () => {
 
     const worker = createPearWorker(
       {
-        dataDirectory: "/local/participant-data",
-        workerEntrypoint: "participant/worker.js",
+        dataDirectory: PearDataDirectory("/local/participant-data"),
+        workerEntrypoint: BareWorkerEntrypoint("participant/worker.js"),
       },
       createRuntime,
     )
 
-    expect(await worker.start()).toEqual({
-      _tag: "failure",
-      reason: "Pear worker closed before reporting readiness",
+    const result = await Effect.runPromise(Effect.either(worker.start))
+
+    expect(result).toMatchObject({
+      _tag: "Left",
+      left: {
+        _tag: "worker-start-failed",
+        reason: "Pear worker closed before reporting readiness",
+      },
     })
   })
 })
