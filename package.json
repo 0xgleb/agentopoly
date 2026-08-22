@@ -1,0 +1,17 @@
+{
+  "name": "agentopoly",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@tetherto/wdk": "^1.0.0-beta.16",
+    "hyperswarm": "^4.17.0",
+    "pear-runtime": "^1.3.1"
+  }
+}
