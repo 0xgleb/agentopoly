@@ -4,9 +4,9 @@ import { normalizeMarketHandle } from './submission.ts'
 
 describe('normalizeMarketHandle acceptance contract', () => {
   test('normalizes a valid market handle', () => {
-    expect(normalizeMarketHandle('  Reliable-Provider7  ')).toEqual({
+    expect(normalizeMarketHandle('  Good-Provider7  ')).toEqual({
       ok: true,
-      value: 'reliable-provider7',
+      value: 'good-provider7',
     })
   })
 
