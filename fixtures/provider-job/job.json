@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "jobId": "normalize-market-handle-v1",
+  "task": "Implement normalizeMarketHandle(input). Trim surrounding whitespace, lowercase ASCII letters, reject empty input, reject a normalized handle longer than 16 UTF-8 bytes, and reject characters outside lowercase ASCII letters, digits, and hyphen. Return the exact HandleResult union from the starter source.",
+  "acceptanceContract": "The fixed local verifier imports submission.ts and checks valid normalization, empty input, invalid characters, the exact 16-byte boundary, and multi-byte UTF-8 overflow. The provider cannot change the verifier command or test file."
+}
