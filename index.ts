@@ -15,7 +15,6 @@ export type {
   Participant,
   ParticipantDependencies,
   ParticipantFailure,
-  ParticipantIdentity,
   ParticipantProjection,
   ParticipantRole,
   ParticipantState,

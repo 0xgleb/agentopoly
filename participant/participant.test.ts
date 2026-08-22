@@ -53,6 +53,7 @@ const createHarness = (
         observation.identityCreates += 1
         return ParticipantIdentity("participant-public-key")
       }),
+      verifyPersisted: (identity) => Effect.succeed(identity),
     },
     stateStore: {
       load: Effect.succeed(persistedState),
@@ -78,6 +79,11 @@ const createHarness = (
 }
 
 describe("participant lifecycle", () => {
+  test("accepts at most 256 UTF-8 bytes for a participant identity", () => {
+    expect(Either.isRight(ParticipantIdentity.either("😀".repeat(64)))).toBe(true)
+    expect(Either.isLeft(ParticipantIdentity.either("😀".repeat(65)))).toBe(true)
+  })
+
   test("starts a participant with its public identity and role projection", async () => {
     const { observation, participant } = createHarness(validConfig, undefined)
 
@@ -138,6 +144,7 @@ describe("participant lifecycle", () => {
       config: validConfig,
       identitySource: {
         create: Effect.succeed(ParticipantIdentity("participant-public-key")),
+        verifyPersisted: (identity) => Effect.succeed(identity),
       },
       stateStore: {
         load: Effect.fail({

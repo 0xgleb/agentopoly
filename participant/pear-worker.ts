@@ -1,3 +1,5 @@
+/// <reference path="./pear-runtime-module.d.ts" />
+
 import * as Brand from "effect/Brand"
 import * as Effect from "effect/Effect"
 import PearRuntimeHost from "pear-runtime"

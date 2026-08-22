@@ -11,7 +11,7 @@ export const DisplayName = Brand.refined<DisplayName>(
 
 export type ParticipantIdentity = string & Brand.Brand<"ParticipantIdentity">
 export const ParticipantIdentity = Brand.refined<ParticipantIdentity>(
-  (value) => value.trim().length > 0 && value.length <= 256,
+  (value) => value.trim().length > 0 && new TextEncoder().encode(value).byteLength <= 256,
   () => Brand.error("identity must be a non-empty public identifier"),
 )
 
@@ -87,6 +87,9 @@ export type ParticipantStateStore = Readonly<{
 
 export type ParticipantIdentitySource = Readonly<{
   readonly create: Effect.Effect<ParticipantIdentity, IdentitySourceFailure>
+  readonly verifyPersisted: (
+    identity: ParticipantIdentity,
+  ) => Effect.Effect<ParticipantIdentity, InvalidPersistedStateFailure>
 }>
 
 export type ParticipantWorker = Readonly<{
@@ -151,24 +154,27 @@ const parseConfig = (value: unknown): Effect.Effect<ParticipantConfig, InvalidCo
     return Effect.fail(invalidConfig("configuration has unknown fields"))
   }
 
-  if (typeof value.displayName !== "string" || !DisplayName.is(value.displayName)) {
+  if (typeof value["displayName"] !== "string" || !DisplayName.is(value["displayName"])) {
     return Effect.fail(invalidConfig("displayName must be a non-empty string"))
   }
 
-  const role = parseRole(value.role)
+  const role = parseRole(value["role"])
 
   if (role === undefined) {
     return Effect.fail(invalidConfig("role must be buyer, provider, or arbitrator"))
   }
 
-  if (typeof value.runtimeVersion !== "string" || !RuntimeVersion.is(value.runtimeVersion)) {
+  if (
+    typeof value["runtimeVersion"] !== "string" ||
+    !RuntimeVersion.is(value["runtimeVersion"])
+  ) {
     return Effect.fail(invalidConfig("runtimeVersion must be a non-empty string"))
   }
 
   return Effect.succeed({
-    displayName: DisplayName(value.displayName),
+    displayName: DisplayName(value["displayName"]),
     role,
-    runtimeVersion: RuntimeVersion(value.runtimeVersion),
+    runtimeVersion: RuntimeVersion(value["runtimeVersion"]),
   })
 }
 
@@ -182,13 +188,13 @@ const parsePersistedState = (
   if (
     !isRecord(value) ||
     Object.keys(value).length !== 1 ||
-    typeof value.identity !== "string" ||
-    !ParticipantIdentity.is(value.identity)
+    typeof value["identity"] !== "string" ||
+    !ParticipantIdentity.is(value["identity"])
   ) {
     return Effect.fail(invalidPersistedState("identity must be a non-empty public identifier"))
   }
 
-  return Effect.succeed({ identity: ParticipantIdentity(value.identity) })
+  return Effect.succeed({ identity: ParticipantIdentity(value["identity"]) })
 }
 
 export const createParticipant = (dependencies: ParticipantDependencies): Participant => {
@@ -225,7 +231,10 @@ export const createParticipant = (dependencies: ParticipantDependencies): Partic
           return yield* Effect.fail(stopped())
         }
 
-        const identity = persistedState?.identity ?? (yield* dependencies.identitySource.create)
+        const identity =
+          persistedState === undefined
+            ? yield* dependencies.identitySource.create
+            : yield* dependencies.identitySource.verifyPersisted(persistedState.identity)
 
         if (persistedState === undefined) {
           yield* dependencies.stateStore.save({ identity })
