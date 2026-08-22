@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["bun"]
   },
-  "include": ["./**/*.ts"]
+  "include": ["./**/*.ts", "../participant/**/*.test.ts", "../participant/pear-runtime-module.d.ts"]
 }

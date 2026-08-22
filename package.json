@@ -13,7 +13,7 @@
     "test:unit": "bun test --timeout 10000 test/unit",
     "test:integration": "bun test --timeout 30000 test/integration",
     "test": "bun run test:unit && bun run test:integration",
-    "build": "bun build --target=browser --outdir=dist index.ts",
+    "build": "bun build --target=bun --packages=external --root=. --outdir=dist index.ts participant/worker.js",
     "check": "bun run format && bun run lint && bun run typecheck && bun run test && bun run build"
   },
   "devDependencies": {

@@ -1,37 +1,38 @@
-/// <reference path="./pear-runtime-module.d.ts" />
-
-import * as Brand from "effect/Brand"
-import * as Effect from "effect/Effect"
-import PearRuntimeHost from "pear-runtime"
+import * as Brand from 'effect/Brand'
+import * as Duration from 'effect/Duration'
+import * as Effect from 'effect/Effect'
+import * as Either from 'effect/Either'
+import PearRuntimeHost from 'pear-runtime'
 
 import {
   FailureReason,
   type ParticipantWorker,
   type WorkerShutdownFailure,
   type WorkerStartFailure,
-} from "./participant.ts"
+} from './participant.ts'
 
-export type PearDataDirectory = string & Brand.Brand<"PearDataDirectory">
+export type PearDataDirectory = string & Brand.Brand<'PearDataDirectory'>
 export const PearDataDirectory = Brand.refined<PearDataDirectory>(
   (value) => value.trim().length > 0 && value.length <= 1024,
-  () => Brand.error("Pear data directory must be non-empty"),
+  () => Brand.error('Pear data directory must be non-empty'),
 )
 
-export type BareWorkerEntrypoint = string & Brand.Brand<"BareWorkerEntrypoint">
+export type BareWorkerEntrypoint = string & Brand.Brand<'BareWorkerEntrypoint'>
 export const BareWorkerEntrypoint = Brand.refined<BareWorkerEntrypoint>(
   (value) => value.trim().length > 0 && value.length <= 1024,
-  () => Brand.error("Bare worker entrypoint must be non-empty"),
+  () => Brand.error('Bare worker entrypoint must be non-empty'),
 )
 
 export type PearWorkerOptions = Readonly<{
   readonly dataDirectory: PearDataDirectory
+  readonly startupTimeout: Duration.Duration
   readonly workerEntrypoint: BareWorkerEntrypoint
 }>
 
 export type PearSidecar = Readonly<{
   readonly destroy: () => void
-  readonly on: (event: "data", listener: (data: Uint8Array) => void) => void
-  readonly once: (event: "close", listener: () => void) => void
+  readonly on: (event: 'data', listener: (data: Uint8Array) => void) => void
+  readonly once: (event: 'close', listener: () => void) => void
 }>
 
 export type PearRuntime = Readonly<{
@@ -40,114 +41,207 @@ export type PearRuntime = Readonly<{
   readonly run: (entrypoint: BareWorkerEntrypoint) => PearSidecar
 }>
 
-export type PearRuntimeFactory = (options: Readonly<{ readonly dir: PearDataDirectory }>) => PearRuntime
+export type PearRuntimeFactory = (
+  options: Readonly<{ readonly dir: PearDataDirectory }>,
+) => PearRuntime
 
-const readyMessage = "ready\n"
-const startupFailurePrefix = "startup-failed:"
+type PearLifecycle = 'created' | 'starting' | 'running' | 'stopping' | 'stopped'
+
+const readyMessage = 'ready'
+const startupFailurePrefix = 'startup-failed:'
+const maximumStartupFrameBytes = 1024
 
 const workerStartFailure = (reason: string): WorkerStartFailure => ({
-  _tag: "worker-start-failed",
+  _tag: 'worker-start-failed',
   reason: FailureReason(reason),
 })
 
 const workerShutdownFailure = (reason: string): WorkerShutdownFailure => ({
-  _tag: "worker-shutdown-failed",
+  _tag: 'worker-shutdown-failed',
   reason: FailureReason(reason),
 })
 
-const readStartupMessage = (data: Uint8Array): string => new TextDecoder().decode(data)
-
 const startSidecar = (sidecar: PearSidecar): Effect.Effect<void, WorkerStartFailure> =>
   Effect.async((resume) => {
-    const onData = (data: Uint8Array): void => {
-      const message = readStartupMessage(data)
+    const decoder = new TextDecoder()
+    const encoder = new TextEncoder()
+    let buffered = ''
 
-      if (message === readyMessage) {
+    const fail = (reason: string): void => {
+      resume(Effect.fail(workerStartFailure(reason)))
+    }
+
+    const onData = (data: Uint8Array): void => {
+      buffered += decoder.decode(data, { stream: true })
+
+      if (encoder.encode(buffered).byteLength > maximumStartupFrameBytes) {
+        fail('Pear worker startup frame exceeded 1024 bytes')
+        return
+      }
+
+      const newline = buffered.indexOf('\n')
+
+      if (newline < 0) {
+        return
+      }
+
+      const frame = buffered.slice(0, newline)
+
+      if (frame === readyMessage) {
         resume(Effect.void)
         return
       }
 
-      if (message.startsWith(startupFailurePrefix)) {
-        const reason = message.slice(startupFailurePrefix.length).trim()
-        resume(
-          Effect.fail(
-            workerStartFailure(reason.length > 0 ? reason : "Pear worker reported an invalid failure"),
-          ),
-        )
+      if (frame.startsWith(startupFailurePrefix)) {
+        const reason = frame.slice(startupFailurePrefix.length).trim()
+        fail(reason.length > 0 ? reason : 'Pear worker reported an invalid failure')
+        return
       }
+
+      fail('Pear worker reported an invalid startup frame')
     }
 
-    sidecar.once("close", () => {
-      resume(Effect.fail(workerStartFailure("Pear worker closed before reporting readiness")))
+    sidecar.once('close', () => {
+      fail('Pear worker closed before reporting readiness')
     })
-    sidecar.on("data", onData)
+    sidecar.on('data', onData)
   })
 
 const createDefaultRuntime: PearRuntimeFactory = (options) => new PearRuntimeHost(options)
 
 export const createPearWorker = (
-  { dataDirectory, workerEntrypoint }: PearWorkerOptions,
+  { dataDirectory, startupTimeout, workerEntrypoint }: PearWorkerOptions,
   createRuntime: PearRuntimeFactory = createDefaultRuntime,
 ): ParticipantWorker => {
+  let lifecycle: PearLifecycle = 'created'
   let runtime: PearRuntime | undefined
   let sidecar: PearSidecar | undefined
-  let shutdownStarted = false
-  let startStarted = false
+  let shutdownEffect: Effect.Effect<void, WorkerShutdownFailure> | undefined
 
-  const shutdown: Effect.Effect<void, WorkerShutdownFailure> = Effect.suspend(() => {
-    if (shutdownStarted) {
-      return Effect.void
+  const shutdown = (): Effect.Effect<void, WorkerShutdownFailure> => {
+    if (shutdownEffect !== undefined) {
+      return shutdownEffect
     }
 
-    shutdownStarted = true
-    const sidecarToClose = sidecar
-    const runtimeToClose = runtime
-    sidecar = undefined
-    runtime = undefined
-
-    return Effect.gen(function* () {
-      yield* Effect.try({
-        try: () => sidecarToClose?.destroy(),
-        catch: () => workerShutdownFailure("could not stop Pear worker"),
-      })
-
-      if (runtimeToClose !== undefined) {
-        yield* Effect.tryPromise({
-          try: () => runtimeToClose.close(),
-          catch: () => workerShutdownFailure("could not close Pear runtime"),
-        })
+    const cleanup = Effect.suspend(() => {
+      if (lifecycle === 'stopped') {
+        return Effect.void
       }
+
+      lifecycle = 'stopping'
+      const sidecarToClose = sidecar
+      const runtimeToClose = runtime
+
+      return Effect.gen(function* () {
+        const sidecarResult = yield* Effect.either(
+          sidecarToClose === undefined
+            ? Effect.void
+            : Effect.try({
+                try: () => {
+                  sidecarToClose.destroy()
+                },
+                catch: () => workerShutdownFailure('could not stop Pear worker'),
+              }),
+        )
+
+        if (Either.isRight(sidecarResult)) {
+          sidecar = undefined
+        }
+
+        const runtimeResult = yield* Effect.either(
+          runtimeToClose === undefined
+            ? Effect.void
+            : Effect.tryPromise({
+                try: () => runtimeToClose.close(),
+                catch: () => workerShutdownFailure('could not close Pear runtime'),
+              }),
+        )
+
+        if (Either.isRight(runtimeResult)) {
+          runtime = undefined
+        }
+
+        if (Either.isLeft(sidecarResult)) {
+          return yield* Effect.fail(sidecarResult.left)
+        }
+
+        if (Either.isLeft(runtimeResult)) {
+          return yield* Effect.fail(runtimeResult.left)
+        }
+
+        lifecycle = 'stopped'
+      })
     })
-  })
+
+    const cachedCleanup = Effect.runSync(Effect.cached(cleanup))
+    shutdownEffect = cachedCleanup.pipe(
+      Effect.tapError(() =>
+        Effect.sync(() => {
+          shutdownEffect = undefined
+        }),
+      ),
+    )
+    return shutdownEffect
+  }
+
+  const cleanFailedStart = (
+    failure: WorkerStartFailure,
+  ): Effect.Effect<never, WorkerStartFailure> =>
+    Effect.zipRight(Effect.either(shutdown()), Effect.fail(failure))
 
   const start: Effect.Effect<void, WorkerStartFailure> = Effect.suspend(() => {
-    if (startStarted || shutdownStarted) {
-      return Effect.fail(workerStartFailure("Pear worker cannot start after shutdown"))
+    if (lifecycle !== 'created') {
+      return Effect.fail(workerStartFailure('Pear worker cannot start after shutdown'))
     }
 
-    startStarted = true
+    lifecycle = 'starting'
 
-    return Effect.gen(function* () {
-      const createdRuntime = yield* Effect.try({
-        try: () => createRuntime({ dir: dataDirectory }),
-        catch: () => workerStartFailure("could not create Pear runtime"),
-      })
-      runtime = createdRuntime
+    return Effect.catchAll(
+      Effect.gen(function* () {
+        const createdRuntime = yield* Effect.try({
+          try: () => createRuntime({ dir: dataDirectory }),
+          catch: () => workerStartFailure('could not create Pear runtime'),
+        })
+        runtime = createdRuntime
 
-      yield* Effect.tryPromise({
-        try: () => createdRuntime.ready(),
-        catch: () => workerStartFailure("Pear runtime did not become ready"),
-      })
+        yield* Effect.tryPromise({
+          try: () => createdRuntime.ready(),
+          catch: () => workerStartFailure('Pear runtime did not become ready'),
+        }).pipe(
+          Effect.timeoutFail({
+            duration: startupTimeout,
+            onTimeout: () => workerStartFailure('Pear runtime readiness timed out'),
+          }),
+        )
 
-      const createdSidecar = yield* Effect.try({
-        try: () => createdRuntime.run(workerEntrypoint),
-        catch: () => workerStartFailure("could not start Pear worker"),
-      })
-      sidecar = createdSidecar
+        if (lifecycle !== 'starting') {
+          return yield* Effect.fail(workerStartFailure('Pear worker was shut down during startup'))
+        }
 
-      yield* startSidecar(createdSidecar)
-    })
+        const createdSidecar = yield* Effect.try({
+          try: () => createdRuntime.run(workerEntrypoint),
+          catch: () => workerStartFailure('could not start Pear worker'),
+        })
+        sidecar = createdSidecar
+
+        yield* startSidecar(createdSidecar).pipe(
+          Effect.timeoutFail({
+            duration: startupTimeout,
+            onTimeout: () => workerStartFailure('Pear worker readiness timed out'),
+          }),
+        )
+
+        const lifecycleAfterStartup = yield* Effect.sync(() => lifecycle)
+
+        if (lifecycleAfterStartup !== 'starting') {
+          return yield* Effect.fail(workerStartFailure('Pear worker was shut down during startup'))
+        }
+
+        lifecycle = 'running'
+      }),
+      cleanFailedStart,
+    )
   })
 
-  return { start, shutdown }
+  return { start, shutdown: shutdown() }
 }
