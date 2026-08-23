@@ -1,13 +1,21 @@
 import * as Effect from 'effect/Effect'
 
-export type ReservedPaymentAttempt = Readonly<{
-  readonly attemptId: string
-  readonly authorizationKey: string
-  readonly status: 'broadcasting' | 'reserved'
-}>
+export type ReservedPaymentAttempt =
+  | Readonly<{
+      readonly attemptId: string
+      readonly authorizationKey: string
+      readonly status: 'broadcasting' | 'reserved'
+    }>
+  | Readonly<{
+      readonly attemptId: string
+      readonly authorizationKey: string
+      readonly status: 'broadcasted'
+      readonly transactionHash: string
+    }>
 
 export type PaymentReservationFailure = Readonly<{
-  readonly _tag: 'already-reserved' | 'attempt-mismatch' | 'invalid-reservation'
+  readonly _tag:
+    'already-broadcasted' | 'already-reserved' | 'attempt-mismatch' | 'invalid-reservation'
   readonly reason: string
 }>
 
@@ -74,15 +82,35 @@ export const decodePaymentReservations = (
       !isRecord(attempt) ||
       typeof attempt['authorizationKey'] !== 'string' ||
       typeof attempt['attemptId'] !== 'string' ||
-      (attempt['status'] !== 'reserved' && attempt['status'] !== 'broadcasting') ||
       !identifier(attempt['authorizationKey']) ||
-      !identifier(attempt['attemptId']) ||
-      !reservations.reserve({
-        authorizationKey: attempt['authorizationKey'],
-        attemptId: attempt['attemptId'],
-        status: attempt['status'],
-      })
+      !identifier(attempt['attemptId'])
     ) {
+      return Effect.fail(failure('invalid-reservation', 'reservation snapshot violates invariants'))
+    }
+    const decoded =
+      attempt['status'] === 'broadcasted' &&
+      typeof attempt['transactionHash'] === 'string' &&
+      identifier(attempt['transactionHash'])
+        ? {
+            authorizationKey: attempt['authorizationKey'],
+            attemptId: attempt['attemptId'],
+            status: 'broadcasted' as const,
+            transactionHash: attempt['transactionHash'],
+          }
+        : attempt['status'] === 'reserved'
+          ? {
+              authorizationKey: attempt['authorizationKey'],
+              attemptId: attempt['attemptId'],
+              status: 'reserved' as const,
+            }
+          : attempt['status'] === 'broadcasting'
+            ? {
+                authorizationKey: attempt['authorizationKey'],
+                attemptId: attempt['attemptId'],
+                status: 'broadcasting' as const,
+              }
+            : undefined
+    if (decoded === undefined || !reservations.reserve(decoded)) {
       return Effect.fail(failure('invalid-reservation', 'reservation snapshot violates invariants'))
     }
   }
@@ -98,11 +126,39 @@ export const markPaymentBroadcasting = (
   if (previous === undefined || previous.attemptId !== attemptId) {
     return Effect.fail(failure('attempt-mismatch', 'attempt does not own this authorization key'))
   }
+  if (previous.status === 'broadcasted') {
+    return Effect.fail(
+      failure('already-broadcasted', 'attempt already has a durable transaction marker'),
+    )
+  }
   if (previous.status === 'broadcasting') return Effect.succeed(previous)
   const broadcasting = { ...previous, status: 'broadcasting' as const }
   return reservations.replace(broadcasting)
     ? Effect.succeed(broadcasting)
     : Effect.fail(failure('attempt-mismatch', 'reservation disappeared before broadcasting'))
+}
+
+export const recordPaymentBroadcast = (
+  reservations: PaymentReservations,
+  authorizationKey: string,
+  attemptId: string,
+  transactionHash: string,
+): Effect.Effect<ReservedPaymentAttempt, PaymentReservationFailure> => {
+  const previous = reservations.find(authorizationKey)
+  if (
+    previous === undefined ||
+    previous.attemptId !== attemptId ||
+    previous.status !== 'broadcasting'
+  ) {
+    return Effect.fail(failure('attempt-mismatch', 'attempt is not a broadcasting reservation'))
+  }
+  if (!identifier(transactionHash)) {
+    return Effect.fail(failure('invalid-reservation', 'transaction hash is required'))
+  }
+  const broadcasted = { ...previous, status: 'broadcasted' as const, transactionHash }
+  return reservations.replace(broadcasted)
+    ? Effect.succeed(broadcasted)
+    : Effect.fail(failure('attempt-mismatch', 'reservation disappeared before broadcast receipt'))
 }
 
 export const reservePayment = (
