@@ -7,6 +7,7 @@ import * as Duration from 'effect/Duration'
 import * as Effect from 'effect/Effect'
 
 import { createCapabilityMarket } from '../../market/capability-market.ts'
+import { createCapabilityObservationRecorder } from '../../market/capability-observation.ts'
 import {
   admitEnvelope,
   createInMemoryReplayStore,
@@ -112,13 +113,16 @@ test('two real Pear hosts admit a signed capability envelope into the local mark
   assert.notEqual(bootstrap, undefined)
   const localDhtBootstrap = LocalDhtBootstrap(`${bootstrap.host}:${bootstrap.port}`)
   const market = createCapabilityMarket()
+  const observations = []
+  const recorder = createCapabilityObservationRecorder(market, (event) => observations.push(event))
   const replayStore = createInMemoryReplayStore()
   const first = createPearWorker(
     {
       dataDirectory: PearDataDirectory('.tmp/pear-discovery/first'),
       localDhtBootstrap,
       localDiscoveryRole: 'server',
-      onAcceptedPeerEnvelope: (envelope) => market.applyEnvelope(envelope, 1_050),
+      onAcceptedPeerEnvelope: (envelope) =>
+        recorder.observe(envelope, 1_050, '2026-08-23T00:00:00.000Z'),
       peerFrameAdmission: (frame) => {
         const decoded = decodeEnvelope(frame, {
           now: 1_050,
@@ -283,6 +287,10 @@ test('two real Pear hosts admit a signed capability envelope into the local mark
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
     assert.equal(market.live(1_050).length, 2)
+    assert.deepEqual(
+      observations.map((event) => event.type),
+      ['capability.observed', 'capability.observed', 'capability.observed'],
+    )
     assert.deepEqual(
       market.live(1_061).map((item) => item.providerIdentity),
       ['provider-b'],
