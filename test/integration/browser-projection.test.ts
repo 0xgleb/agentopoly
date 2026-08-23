@@ -73,7 +73,7 @@ describe('browser economy projection', () => {
           verification: 'passed',
         }),
       ])
-      expect(projection.unobserved).toEqual(['capability discovery', 'signed terms', 'arbitration'])
+      expect(projection.unobserved).toEqual(['capability discovery', 'signed terms'])
     }
   })
 

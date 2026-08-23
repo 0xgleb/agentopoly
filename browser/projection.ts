@@ -86,7 +86,7 @@ export type BrowserProjection = Readonly<{
   readonly agents: readonly BrowserAgentProjection[]
   readonly events: readonly BrowserEventProjection[]
   readonly jobs: readonly BrowserJobProjection[]
-  readonly unobserved: readonly ['capability discovery', 'signed terms', 'arbitration']
+  readonly unobserved: readonly ['capability discovery', 'signed terms']
 }>
 
 export type BrowserProjectionRefusal = Readonly<{
@@ -391,6 +391,6 @@ export const projectEventLog = (text: string, observedAt: Date): BrowserProjecti
       type: event.type,
     })),
     jobs: [...jobs.values()].sort((left, right) => left.jobId.localeCompare(right.jobId)),
-    unobserved: ['capability discovery', 'signed terms', 'arbitration'],
+    unobserved: ['capability discovery', 'signed terms'],
   }
 }

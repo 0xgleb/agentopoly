@@ -120,10 +120,9 @@ const decodeProjection = (value: unknown): BrowserProjectionResult | undefined =
     agents.length !== value['agents'].length ||
     events.length !== value['events'].length ||
     jobs.length !== value['jobs'].length ||
-    value['unobserved'].length !== 3 ||
+    value['unobserved'].length !== 2 ||
     value['unobserved'][0] !== 'capability discovery' ||
-    value['unobserved'][1] !== 'signed terms' ||
-    value['unobserved'][2] !== 'arbitration'
+    value['unobserved'][1] !== 'signed terms'
   ) {
     return undefined
   }
@@ -133,7 +132,7 @@ const decodeProjection = (value: unknown): BrowserProjectionResult | undefined =
     agents,
     events,
     jobs,
-    unobserved: ['capability discovery', 'signed terms', 'arbitration'],
+    unobserved: ['capability discovery', 'signed terms'],
   }
 }
 
