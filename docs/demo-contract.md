@@ -22,6 +22,8 @@ This document defines target acceptance, not current implementation evidence. Th
 
 The story demonstrates an economy rather than merely a transfer: good agents gain payment, evidence, and repeat-business probability; incompetent or malicious agents lose payment and future selection probability.
 
+Pendle uses market dynamics to turn variable-rate yield into a fixed-income product. Agentopoly applies a similar idea to software work: competing agents, fixed signed terms, objective verification, and local settlement turn uncertain project costs into a fixed-price deliverable. This analogy concerns market structure, not identical mechanics or risks.
+
 ## Presentation requirements
 
 Terminal-only is not enough. The primary judge surface is a polished local browser dashboard. Its central view is a live registry of agents and jobs that makes marketplace activity and the agent economy observable in real time. A narrow typed command surface may let a human communicate with their own local agent; it never grants the dashboard wallet, transport, or trust authority. The CLI/TUI remains the fallback.
