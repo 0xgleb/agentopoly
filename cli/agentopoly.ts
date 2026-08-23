@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { createHash } from 'node:crypto'
-import { appendFile, copyFile, lstat, mkdir, readFile } from 'node:fs/promises'
+import { appendFile, copyFile, lstat, mkdir, readFile, realpath } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join, relative, resolve } from 'node:path'
 
@@ -13,6 +13,7 @@ import {
   type ProviderProfile,
 } from './provider-workspace.ts'
 import { decodeLatestVerification, deriveSettlementEvents } from './settlement.ts'
+import { redactBoundedVerifierEvidence } from './verification-evidence.ts'
 
 type CliFailure = Readonly<{
   readonly _tag: 'invalid-command' | 'provider-failed' | 'runtime-io-failed' | 'verification-failed'
@@ -32,6 +33,8 @@ const runsRoot = join(repositoryRoot, '.tmp', 'agentopoly-runs')
 const eventsPath = join(repositoryRoot, '.tmp', 'agentopoly-events.jsonl')
 const fixtureRoot = join(repositoryRoot, 'fixtures', 'provider-job')
 const ohMyPiExtension = fileURLToPath(import.meta.resolve('oh-my-pi'))
+const verificationTimeoutMs = 10_000
+const maximumCapturedBytes = 16_384
 
 const childEnvironment = (): Readonly<Record<string, string>> => {
   const allowed = ['HOME', 'PATH', 'TERM', 'TMPDIR', 'USER', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME']
@@ -65,6 +68,28 @@ const waitForExit = (child: BoundedChild, timeoutMilliseconds: number): Promise<
       },
     )
   })
+
+const collectBoundedOutput = async (stream: ReadableStream<Uint8Array>): Promise<string> => {
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let retained = 0
+  let next = await reader.read()
+  while (!next.done) {
+    if (retained < maximumCapturedBytes) {
+      const chunk = next.value.slice(0, maximumCapturedBytes - retained)
+      chunks.push(chunk)
+      retained += chunk.length
+    }
+    next = await reader.read()
+  }
+  const output = new Uint8Array(retained)
+  let offset = 0
+  for (const chunk of chunks) {
+    output.set(chunk, offset)
+    offset += chunk.length
+  }
+  return new TextDecoder().decode(output)
+}
 
 const appendEvent = (event: Readonly<Record<string, unknown>>): Effect.Effect<void, CliFailure> =>
   Effect.tryPromise({
@@ -162,8 +187,21 @@ const runProvider = (
     return run
   })
 
+const requireTermsHash = (): Effect.Effect<string, CliFailure> => {
+  const termsHash = Bun.env['AGENTOPOLY_TERMS_HASH']
+  return typeof termsHash === 'string' && /^[a-f0-9]{64}$/.test(termsHash)
+    ? Effect.succeed(termsHash)
+    : Effect.fail(
+        failure(
+          'invalid-command',
+          'verification requires AGENTOPOLY_TERMS_HASH from the exact signed agreement',
+        ),
+      )
+}
+
 const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailure> =>
   Effect.gen(function* () {
+    const termsHash = yield* requireTermsHash()
     const workspace = yield* resolveProviderWorkspace(repositoryRoot, workspaceCandidate).pipe(
       Effect.mapError(() =>
         failure('invalid-command', 'verification workspace must be beneath .tmp/agentopoly-runs'),
@@ -182,27 +220,124 @@ const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailur
       catch: () => failure('verification-failed', 'provider did not submit an artifact'),
     })
     const artifactHash = createHash('sha256').update(submission, 'utf8').digest('hex')
-    const exitCode = yield* Effect.tryPromise({
+    const eventWorkspace = yield* Effect.tryPromise({
+      try: async () => `.tmp/agentopoly-runs/${relative(await realpath(runsRoot), workspace)}`,
+      catch: () =>
+        failure('verification-failed', 'could not establish the verified workspace identity'),
+    })
+    const eventLog = yield* Effect.tryPromise({
       try: async () => {
-        const child = Bun.spawn(['bun', 'test', '--timeout', '10000', 'acceptance.test.ts'], {
-          cwd: workspace,
-          env: childEnvironment(),
-          stderr: 'inherit',
-          stdin: 'ignore',
-          stdout: 'inherit',
-        })
-        return waitForExit(child, 15_000)
+        try {
+          return await readFile(eventsPath, 'utf8')
+        } catch (cause: unknown) {
+          if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT') return undefined
+          throw cause
+        }
+      },
+      catch: () => failure('verification-failed', 'could not read durable verification evidence'),
+    })
+    if (eventLog !== undefined) {
+      const existing = yield* Effect.either(decodeLatestVerification(eventLog, eventWorkspace))
+      if (existing._tag === 'Right') {
+        if (
+          existing.right.artifactHash !== artifactHash ||
+          existing.right.termsHash !== termsHash
+        ) {
+          return yield* Effect.fail(
+            failure(
+              'verification-failed',
+              'durable verification conflicts with current artifact or terms',
+            ),
+          )
+        }
+        return existing.right.passed
+      }
+      if (existing.left._tag !== 'verification-not-found') {
+        return yield* Effect.fail(
+          failure(
+            'verification-failed',
+            'durable verification evidence is malformed or conflicting',
+          ),
+        )
+      }
+    }
+    const verifierSource = yield* Effect.tryPromise({
+      try: () => readFile(join(workspace, 'acceptance.test.ts'), 'utf8'),
+      catch: () => failure('verification-failed', 'fixed verifier contract is unavailable'),
+    })
+    const verifierHash = createHash('sha256').update(verifierSource, 'utf8').digest('hex')
+    const verifierResult = yield* Effect.tryPromise({
+      try: async () => {
+        const child = Bun.spawn(
+          ['bun', 'test', '--timeout', verificationTimeoutMs.toString(), 'acceptance.test.ts'],
+          {
+            cwd: workspace,
+            env: childEnvironment(),
+            stderr: 'pipe',
+            stdin: 'ignore',
+            stdout: 'pipe',
+          },
+        )
+        let timedOut = false
+        const timeout = setTimeout(() => {
+          timedOut = true
+          child.kill()
+        }, verificationTimeoutMs)
+        const [exitCode, stdout, stderr] = await Promise.all([
+          child.exited,
+          collectBoundedOutput(child.stdout),
+          collectBoundedOutput(child.stderr),
+        ])
+        clearTimeout(timeout)
+        return { exitCode, stderr, stdout, timedOut }
       },
       catch: () => failure('verification-failed', 'fixed verifier process could not start'),
     })
-    const passed = exitCode === 0
+    if (verifierResult.timedOut) {
+      return yield* Effect.fail(
+        failure('verification-failed', 'fixed verifier exceeded its bounded execution time'),
+      )
+    }
+    const verifiedSubmission = yield* Effect.tryPromise({
+      try: () => readFile(join(workspace, 'submission.ts'), 'utf8'),
+      catch: () =>
+        failure('verification-failed', 'provider artifact disappeared during verification'),
+    })
+    const verifiedArtifactHash = createHash('sha256')
+      .update(verifiedSubmission, 'utf8')
+      .digest('hex')
+    if (verifiedArtifactHash !== artifactHash) {
+      return yield* Effect.fail(
+        failure('verification-failed', 'provider artifact changed during verification'),
+      )
+    }
+    const passed = verifierResult.exitCode === 0
+    const evidence = redactBoundedVerifierEvidence(
+      `${verifierResult.stdout}\n${verifierResult.stderr}`,
+      workspace,
+    )
+    const evidenceHash = createHash('sha256')
+      .update(
+        JSON.stringify({
+          artifactHash,
+          evidence,
+          exitCode: verifierResult.exitCode,
+          termsHash,
+          verifierHash,
+        }),
+        'utf8',
+      )
+      .digest('hex')
     yield* appendEvent({
       artifactHash,
+      evidenceHash,
       evidenceSource: 'live-agent-run',
       jobId: 'normalize-market-handle-v1',
       passed,
+      termsHash,
       type: 'verification.completed',
-      workspace: relative(repositoryRoot, workspace),
+      verifierHash,
+      workspace: eventWorkspace,
     })
     return passed
   })
@@ -215,14 +350,18 @@ const finalizeRun = (workspaceCandidate: string): Effect.Effect<void, CliFailure
       ),
     )
 
+    const eventWorkspace = yield* Effect.tryPromise({
+      try: async () => `.tmp/agentopoly-runs/${relative(await realpath(runsRoot), workspace)}`,
+      catch: () =>
+        failure('runtime-io-failed', 'could not establish the verified workspace identity'),
+    })
     const eventLog = yield* Effect.tryPromise({
       try: () => readFile(eventsPath, 'utf8'),
       catch: () => failure('runtime-io-failed', 'live event log is unavailable'),
     })
-    const verification = yield* decodeLatestVerification(
-      eventLog,
-      relative(repositoryRoot, workspace),
-    ).pipe(Effect.mapError((cause) => failure('verification-failed', cause.reason)))
+    const verification = yield* decodeLatestVerification(eventLog, eventWorkspace).pipe(
+      Effect.mapError((cause) => failure('verification-failed', cause.reason)),
+    )
     yield* Effect.forEach(deriveSettlementEvents(verification), appendEvent, {
       concurrency: 1,
       discard: true,
