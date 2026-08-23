@@ -98,6 +98,28 @@ describe('live settlement decision events', () => {
     })
   })
 
+  test('fails closed when one workspace has conflicting verification bindings', async () => {
+    const event = (termsHash: string) =>
+      JSON.stringify({
+        artifactHash: 'a'.repeat(64),
+        evidenceHash: 'd'.repeat(64),
+        evidenceSource: 'live-agent-run',
+        jobId: 'normalize-market-handle-v1',
+        passed: true,
+        recordedAt: '2026-08-22T23:00:00.000Z',
+        schemaVersion: 1,
+        termsHash,
+        type: 'verification.completed',
+        verifierHash: 'e'.repeat(64),
+        workspace,
+      })
+    const result = await Effect.runPromiseExit(
+      decodeLatestVerification(`${event('c'.repeat(64))}\n${event('f'.repeat(64))}\n`, workspace),
+    )
+
+    expect(result._tag).toBe('Failure')
+  })
+
   test('refuses a verification event without all payment-binding hashes', async () => {
     const unbound = await Effect.runPromiseExit(
       decodeLatestVerification(

@@ -58,10 +58,7 @@ const failure = (tag: SettlementFailure['_tag'], reason: string): SettlementFail
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const decodeEvent = (
-  line: string,
-  workspace: string,
-): Effect.Effect<DecodedEvent, SettlementFailure> =>
+const decodeEvent = (line: string): Effect.Effect<DecodedEvent, SettlementFailure> =>
   Effect.gen(function* () {
     const parsed = yield* Effect.option(
       Effect.try({
@@ -71,11 +68,7 @@ const decodeEvent = (
     )
     if (parsed._tag === 'None') return { _tag: 'other' }
     const value = parsed.value
-    if (
-      !isRecord(value) ||
-      value['type'] !== 'verification.completed' ||
-      value['workspace'] !== workspace
-    ) {
+    if (!isRecord(value) || value['type'] !== 'verification.completed') {
       return { _tag: 'other' }
     }
 
@@ -126,14 +119,27 @@ export const decodeLatestVerification = (
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
-    const events = yield* Effect.forEach(lines, (line) => decodeEvent(line, workspace))
-    const verification = events.findLast(
+    const events = yield* Effect.forEach(lines, decodeEvent)
+    const verifications = events.filter(
       (event): event is Extract<DecodedEvent, { readonly _tag: 'verification' }> =>
         event._tag === 'verification' && event.value.workspace === workspace,
     )
+    const verification = verifications.at(-1)
     if (verification === undefined) {
       return yield* Effect.fail(
         failure('verification-not-found', 'no live verification exists for the workspace'),
+      )
+    }
+    if (
+      verifications.some(
+        (candidate) =>
+          candidate.value.artifactHash !== verification.value.artifactHash ||
+          candidate.value.termsHash !== verification.value.termsHash ||
+          candidate.value.verifierHash !== verification.value.verifierHash,
+      )
+    ) {
+      return yield* Effect.fail(
+        failure('invalid-event-log', 'workspace has conflicting verification bindings'),
       )
     }
     return verification.value
