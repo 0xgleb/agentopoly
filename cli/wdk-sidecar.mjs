@@ -9,6 +9,7 @@ import { decodeSidecarCommand } from './wdk-sidecar-contract.ts'
 const moduleRoot = fileURLToPath(new URL('../', import.meta.url))
 const mcpEntrypoint = new URL('../node_modules/@tetherto/wdk-cli/bin/wdk-mcp.mjs', import.meta.url)
 const requestTimeoutMs = 30_000
+const maximumCommandBytes = 65_536
 
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`)
 
@@ -82,6 +83,10 @@ const callWdkMcp = async (command) => {
 
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
 for await (const line of lines) {
+  if (Buffer.byteLength(line, 'utf8') > maximumCommandBytes) {
+    write({ error: 'command-too-large', ok: false })
+    continue
+  }
   let input
   try {
     input = JSON.parse(line)
