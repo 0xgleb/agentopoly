@@ -322,7 +322,7 @@ describe('Agentopoly CLI', () => {
 
     expect(exitCode).toBe(0)
     expect(stderr).toBe('')
-    expect(stdout).toContain('WDK payment safely refused: broadcast integration is not enabled.')
+    expect(stdout).toContain('WDK payment safely refused: local WDK gateway is not configured')
   })
 
   test('presents the packaged provider workflow without starting an agent', async () => {

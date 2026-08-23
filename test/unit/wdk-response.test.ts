@@ -69,7 +69,7 @@ describe('WDK MCP responses', () => {
         {
           content: [
             {
-              text: '{"success":true,"network":"ethereum-sepolia","to":"0xprovider","amount":"1500000","txHash":"abc"}',
+              text: `{"success":true,"network":"ethereum-sepolia","to":"0xprovider","amount":"1500000","txHash":"${'c'.repeat(64)}"}`,
               type: 'text',
             },
           ],
@@ -77,7 +77,31 @@ describe('WDK MCP responses', () => {
         { atomicAmount: '1500000', destination: '0xprovider', network: 'ethereum-sepolia' },
       ),
     )
-    expect(result).toEqual({ transactionHash: 'abc' })
+    expect(result).toEqual({ transactionHash: 'c'.repeat(64) })
+  })
+
+  test('fails closed on a non-canonical transaction hash', async () => {
+    expect(
+      (
+        await Effect.runPromiseExit(
+          decodeBroadcastResult(
+            {
+              content: [
+                {
+                  text: '{"success":true,"network":"ethereum-sepolia","to":"0xprovider","amount":"1500000","txHash":"transaction-a"}',
+                  type: 'text',
+                },
+              ],
+            },
+            {
+              atomicAmount: '1500000',
+              destination: '0xprovider',
+              network: 'ethereum-sepolia',
+            },
+          ),
+        )
+      )._tag,
+    ).toBe('Failure')
   })
 
   test('fails closed on an incomplete response', async () => {

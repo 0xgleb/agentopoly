@@ -4,7 +4,7 @@ export type ReservedPaymentAttempt =
   | Readonly<{
       readonly attemptId: string
       readonly authorizationKey: string
-      readonly status: 'broadcasting' | 'reserved'
+      readonly status: 'broadcasting' | 'reconciliation-pending' | 'reserved'
     }>
   | Readonly<{
       readonly attemptId: string
@@ -87,7 +87,7 @@ export const decodePaymentReservations = (
     ) {
       return Effect.fail(failure('invalid-reservation', 'reservation snapshot violates invariants'))
     }
-    const decoded =
+    const decoded: ReservedPaymentAttempt | undefined =
       attempt['status'] === 'broadcasted' &&
       typeof attempt['transactionHash'] === 'string' &&
       identifier(attempt['transactionHash'])
@@ -103,11 +103,12 @@ export const decodePaymentReservations = (
               attemptId: attempt['attemptId'],
               status: 'reserved' as const,
             }
-          : attempt['status'] === 'broadcasting'
+          : attempt['status'] === 'broadcasting' || attempt['status'] === 'reconciliation-pending'
             ? {
                 authorizationKey: attempt['authorizationKey'],
                 attemptId: attempt['attemptId'],
-                status: 'broadcasting' as const,
+                status:
+                  attempt['status'] === 'broadcasting' ? 'broadcasting' : 'reconciliation-pending',
               }
             : undefined
     if (decoded === undefined || !reservations.reserve(decoded)) {
@@ -131,11 +132,36 @@ export const markPaymentBroadcasting = (
       failure('already-broadcasted', 'attempt already has a durable transaction marker'),
     )
   }
+  if (previous.status === 'reconciliation-pending') {
+    return Effect.fail(
+      failure('already-reserved', 'attempt is reconciliation-pending and cannot be retried'),
+    )
+  }
   if (previous.status === 'broadcasting') return Effect.succeed(previous)
   const broadcasting = { ...previous, status: 'broadcasting' as const }
   return reservations.replace(broadcasting)
     ? Effect.succeed(broadcasting)
     : Effect.fail(failure('attempt-mismatch', 'reservation disappeared before broadcasting'))
+}
+
+export const markPaymentReconciliationPending = (
+  reservations: PaymentReservations,
+  authorizationKey: string,
+  attemptId: string,
+): Effect.Effect<ReservedPaymentAttempt, PaymentReservationFailure> => {
+  const previous = reservations.find(authorizationKey)
+  if (
+    previous === undefined ||
+    previous.attemptId !== attemptId ||
+    (previous.status !== 'broadcasting' && previous.status !== 'reconciliation-pending')
+  ) {
+    return Effect.fail(failure('attempt-mismatch', 'attempt is not an in-flight reservation'))
+  }
+  if (previous.status === 'reconciliation-pending') return Effect.succeed(previous)
+  const pending = { ...previous, status: 'reconciliation-pending' as const }
+  return reservations.replace(pending)
+    ? Effect.succeed(pending)
+    : Effect.fail(failure('attempt-mismatch', 'reservation disappeared during reconciliation'))
 }
 
 export const recordPaymentBroadcast = (
@@ -152,8 +178,8 @@ export const recordPaymentBroadcast = (
   ) {
     return Effect.fail(failure('attempt-mismatch', 'attempt is not a broadcasting reservation'))
   }
-  if (!identifier(transactionHash)) {
-    return Effect.fail(failure('invalid-reservation', 'transaction hash is required'))
+  if (!/^[a-f0-9]{64}$/.test(transactionHash)) {
+    return Effect.fail(failure('invalid-reservation', 'transaction hash must be lowercase hex'))
   }
   const broadcasted = { ...previous, status: 'broadcasted' as const, transactionHash }
   return reservations.replace(broadcasted)

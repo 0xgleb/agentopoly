@@ -6,6 +6,7 @@ import {
   createPaymentReservations,
   decodePaymentReservations,
   markPaymentBroadcasting,
+  markPaymentReconciliationPending,
   recordPaymentBroadcast,
   reservePayment,
   snapshotPaymentReservations,
@@ -48,12 +49,37 @@ describe('payment reservation', () => {
     ).toBe(true)
   })
 
+  test('persists reconciliation-pending and refuses an automatic retry after restart', async () => {
+    const reservations = createPaymentReservations()
+    await Effect.runPromise(reservePayment(reservations, 'authorization-1', 'attempt-1'))
+    await Effect.runPromise(markPaymentBroadcasting(reservations, 'authorization-1', 'attempt-1'))
+    await Effect.runPromise(
+      markPaymentReconciliationPending(reservations, 'authorization-1', 'attempt-1'),
+    )
+    const restored = await Effect.runPromise(
+      decodePaymentReservations(snapshotPaymentReservations(reservations)),
+    )
+
+    expect(restored.find('authorization-1')).toEqual({
+      attemptId: 'attempt-1',
+      authorizationKey: 'authorization-1',
+      status: 'reconciliation-pending',
+    })
+    expect(
+      Either.isLeft(
+        await Effect.runPromise(
+          Effect.either(markPaymentBroadcasting(restored, 'authorization-1', 'attempt-1')),
+        ),
+      ),
+    ).toBe(true)
+  })
+
   test('persists a broadcast marker that cannot be retried after restart', async () => {
     const reservations = createPaymentReservations()
     await Effect.runPromise(reservePayment(reservations, 'authorization-1', 'attempt-1'))
     await Effect.runPromise(markPaymentBroadcasting(reservations, 'authorization-1', 'attempt-1'))
     await Effect.runPromise(
-      recordPaymentBroadcast(reservations, 'authorization-1', 'attempt-1', 'transaction-1'),
+      recordPaymentBroadcast(reservations, 'authorization-1', 'attempt-1', 'c'.repeat(64)),
     )
     const restored = await Effect.runPromise(
       decodePaymentReservations(snapshotPaymentReservations(reservations)),
@@ -63,7 +89,7 @@ describe('payment reservation', () => {
       attemptId: 'attempt-1',
       authorizationKey: 'authorization-1',
       status: 'broadcasted',
-      transactionHash: 'transaction-1',
+      transactionHash: 'c'.repeat(64),
     })
     expect(
       Either.isLeft(
