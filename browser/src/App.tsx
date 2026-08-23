@@ -4,8 +4,15 @@ import * as Effect from 'effect/Effect'
 
 import type { BrowserProjection, BrowserProjectionResult } from '../projection.ts'
 
+const MAX_JAVASCRIPT_DATE_MILLISECONDS = 8_640_000_000_000_000
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isBoundedText = (value: unknown, maximumLength: number): value is string =>
+  typeof value === 'string' &&
+  value.trim().length > 0 &&
+  new TextEncoder().encode(value).byteLength <= maximumLength
 
 const isFreshness = (value: unknown): value is 'current' | 'stale' =>
   value === 'current' || value === 'stale'
@@ -17,6 +24,12 @@ const isPaymentReason = (
   value: unknown,
 ): value is 'missing-exact-payment-authorization' | 'verification-failed' =>
   value === 'missing-exact-payment-authorization' || value === 'verification-failed'
+
+const isPositiveSafeInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 1
+
+const isValidDateMilliseconds = (value: unknown): value is number =>
+  isPositiveSafeInteger(value) && value <= MAX_JAVASCRIPT_DATE_MILLISECONDS
 
 const isEventType = (
   value: unknown,
@@ -43,6 +56,7 @@ const decodeProjection = (value: unknown): BrowserProjectionResult | undefined =
   }
   if (
     !Array.isArray(value['agents']) ||
+    !Array.isArray(value['capabilities']) ||
     !Array.isArray(value['events']) ||
     !Array.isArray(value['jobs']) ||
     !Array.isArray(value['unobserved'])
@@ -63,6 +77,33 @@ const decodeProjection = (value: unknown): BrowserProjectionResult | undefined =
           },
         ]
       : [],
+  )
+  const capabilities: BrowserProjection['capabilities'][number][] = value['capabilities'].flatMap(
+    (capability) =>
+      isRecord(capability) &&
+      isBoundedText(capability['capabilityId'], 1_024) &&
+      isBoundedText(capability['evidenceSummary'], 1_024) &&
+      isBoundedText(capability['inputContract'], 1_024) &&
+      isBoundedText(capability['limits'], 1_024) &&
+      isBoundedText(capability['outputContract'], 1_024) &&
+      isBoundedText(capability['priceBasis'], 1_024) &&
+      isBoundedText(capability['providerIdentity'], 256) &&
+      isValidDateMilliseconds(capability['expiresAt']) &&
+      isPositiveSafeInteger(capability['revision'])
+        ? [
+            {
+              capabilityId: capability['capabilityId'],
+              evidenceSummary: capability['evidenceSummary'],
+              expiresAt: capability['expiresAt'],
+              inputContract: capability['inputContract'],
+              limits: capability['limits'],
+              outputContract: capability['outputContract'],
+              priceBasis: capability['priceBasis'],
+              providerIdentity: capability['providerIdentity'],
+              revision: capability['revision'],
+            },
+          ]
+        : [],
   )
   const events: BrowserProjection['events'][number][] = value['events'].flatMap((event) =>
     isRecord(event) &&
@@ -118,11 +159,18 @@ const decodeProjection = (value: unknown): BrowserProjectionResult | undefined =
 
   if (
     agents.length !== value['agents'].length ||
+    capabilities.length !== value['capabilities'].length ||
     events.length !== value['events'].length ||
     jobs.length !== value['jobs'].length ||
-    value['unobserved'].length !== 2 ||
-    value['unobserved'][0] !== 'capability discovery' ||
-    value['unobserved'][1] !== 'signed terms'
+    (capabilities.length === 0 &&
+      (value['unobserved'].length !== 3 ||
+        value['unobserved'][0] !== 'capability discovery' ||
+        value['unobserved'][1] !== 'signed terms' ||
+        value['unobserved'][2] !== 'arbitration')) ||
+    (capabilities.length > 0 &&
+      (value['unobserved'].length !== 2 ||
+        value['unobserved'][0] !== 'signed terms' ||
+        value['unobserved'][1] !== 'arbitration'))
   ) {
     return undefined
   }
@@ -130,9 +178,13 @@ const decodeProjection = (value: unknown): BrowserProjectionResult | undefined =
   return {
     _tag: 'projection',
     agents,
+    capabilities,
     events,
     jobs,
-    unobserved: ['capability discovery', 'signed terms'],
+    unobserved:
+      capabilities.length === 0
+        ? ['capability discovery', 'signed terms', 'arbitration']
+        : ['signed terms', 'arbitration'],
   }
 }
 
@@ -140,7 +192,11 @@ const fetchProjection = (): Promise<BrowserProjectionResult> =>
   Effect.runPromise(
     Effect.match(
       Effect.tryPromise({
-        try: () => fetch('/api/projection').then((response) => response.json()),
+        try: async () => {
+          const response = await fetch('/api/projection')
+          if (!response.ok) throw new Error('projection request failed')
+          return response.json()
+        },
         catch: () => 'projection-unavailable',
       }),
       {
@@ -193,6 +249,33 @@ export const App = () => {
                     <ul>
                       <For each={snapshot().agents}>
                         {(agent) => <li>{agent.profile} · provider runtime profile</li>}
+                      </For>
+                    </ul>
+                  </Show>
+                </article>
+                <article>
+                  <h2>Observed capabilities</h2>
+                  <Show
+                    when={snapshot().capabilities.length > 0}
+                    fallback={<p>No live peer capability has been observed.</p>}
+                  >
+                    <ul>
+                      <For each={snapshot().capabilities}>
+                        {(capability) => (
+                          <li>
+                            <strong>{capability.providerIdentity}</strong> ·{' '}
+                            {capability.capabilityId}
+                            <br />
+                            {capability.priceBasis} · {capability.limits}
+                            <br />
+                            Expires{' '}
+                            <time dateTime={new Date(capability.expiresAt).toISOString()}>
+                              {new Date(capability.expiresAt).toISOString()}
+                            </time>
+                            <br />
+                            {capability.evidenceSummary}
+                          </li>
+                        )}
                       </For>
                     </ul>
                   </Show>

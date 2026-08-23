@@ -103,7 +103,7 @@ Unsupported versions, missing migration paths, corrupt records, stale generation
 
 A capability advertisement states the service, input and output contracts, price hint, wallet address, supported verification modes, revision, and expiry. Advertisements are hints, not binding offers. A buyer must request a specific job and accept a specific bid before terms exist.
 
-Peers expire stale advertisements locally. There is no global marketplace database.
+Peers expire stale advertisements locally. There is no global marketplace database. The browser may project a capability only from a bounded, typed `capability.observed` event produced after local capability-advertisement admission. That event binds the provider identity, capability ID, price basis, limits, expiry, bounded evidence summary, event envelope, and `live-peer` provenance. A peer claim, a partial record, forged provenance, or untrusted legacy fields cannot produce a capability card, verification result, reputation change, payment state, or local action. Capability discovery remains unobserved until at least one valid live-peer event is recorded.
 
 ## Job agreement
 
