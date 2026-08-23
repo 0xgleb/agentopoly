@@ -191,6 +191,8 @@ The in-flight call has only two post-invocation outcomes. A fully decoded succes
 
 A payment receipt binds the job, authorization key, attempt ID, terms hash, verification hash, transaction hash, source and destination, atomic amount, asset and token contract, network, estimated and observed native fee, policy revision, broadcast time, and observed settlement state. Receipt creation never upgrades an unconfirmed observation to final settlement.
 
+The runnable demo CLI must safely refuse settlement unless a passed live verification and every exact payment witness above are present. That refusal invokes no WDK process and emits typed `payment.refused`, `receipt.recorded`, and `reputation.updated` events. A verified delivery may add positive local service evidence while its payment remains explicitly refused; failed verification adds negative local service evidence and cannot authorize provider payment. These are live local decisions, not simulated broadcasts or settlement receipts.
+
 ## Disputes and arbitration
 
 Either party may open a dispute according to the signed arbitration policy. When verification fails, the buyer withholds the original provider payment before opening the dispute. A dispute bundle contains only evidence already bound to the job plus the disputing statement.

@@ -22,5 +22,6 @@ describe('Agentopoly CLI', () => {
     expect(stdout).toContain('Agentopoly — paid work between autonomous Pi agents')
     expect(stdout).toContain('provider reliable')
     expect(stdout).toContain('provider malicious')
+    expect(stdout).toContain('finalize <workspace>')
   })
 })

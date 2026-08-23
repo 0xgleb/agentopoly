@@ -7,6 +7,7 @@ import { join, relative, resolve } from 'node:path'
 import * as Effect from 'effect/Effect'
 
 import type { ProviderProfile } from './provider-workspace.ts'
+import { decodeLatestVerification, deriveSettlementEvents } from './settlement.ts'
 
 type CliFailure = Readonly<{
   readonly _tag: 'invalid-command' | 'provider-failed' | 'runtime-io-failed' | 'verification-failed'
@@ -90,7 +91,7 @@ const runProvider = (
       '-e',
       join(repositoryRoot, 'node_modules', 'oh-my-pi', 'dist', 'extension.js'),
       '-e',
-      join(repositoryRoot, '.pi', 'extensions', 'agentopoly.ts'),
+      join(repositoryRoot, 'cli', 'extensions', 'agentopoly.ts'),
       '--agentopoly-profile',
       profile,
       '--agentopoly-workspace',
@@ -162,14 +163,44 @@ const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailur
     return passed
   })
 
+const finalizeRun = (workspaceCandidate: string): Effect.Effect<void, CliFailure> =>
+  Effect.gen(function* () {
+    const workspace = resolve(repositoryRoot, workspaceCandidate)
+    const relation = relative(runsRoot, workspace)
+    if (relation.length === 0 || relation.startsWith('..')) {
+      return yield* Effect.fail(
+        failure('invalid-command', 'settlement workspace must be beneath .tmp/agentopoly-runs'),
+      )
+    }
+
+    const eventLog = yield* Effect.tryPromise({
+      try: () => readFile(eventsPath, 'utf8'),
+      catch: () => failure('runtime-io-failed', 'live event log is unavailable'),
+    })
+    const verification = yield* decodeLatestVerification(
+      eventLog,
+      relative(repositoryRoot, workspace),
+    ).pipe(Effect.mapError((cause) => failure('verification-failed', cause.reason)))
+    yield* Effect.forEach(deriveSettlementEvents(verification), appendEvent, {
+      concurrency: 1,
+      discard: true,
+    })
+    console.log(
+      verification.passed
+        ? 'WDK payment safely refused: exact local payment authorization is absent.'
+        : 'WDK payment safely refused: provider verification failed.',
+    )
+  })
+
 const printHelp = (): void => {
   console.log(`Agentopoly — paid work between autonomous Pi agents
 
 Usage:
   agentopoly provider reliable       Launch the reliable provider interactively
   agentopoly provider malicious      Launch the malicious/incompetent provider interactively
-  agentopoly demo                    Run both providers non-interactively, then verify both artifacts
+  agentopoly demo                    Run both providers, verify, and record safe payment decisions
   agentopoly verify <workspace>      Run the fixed verifier for one submitted workspace
+  agentopoly finalize <workspace>    Refuse unauthorized payment and record receipt/reputation events
 
 Provider sessions load the exact Oh My Pi package plus Agentopoly's project extension. They receive only fixture-scoped inspect and submit tools; no wallet, network, shell, or unrestricted filesystem capability.`)
 }
@@ -199,6 +230,11 @@ const main = (args: readonly string[]): Effect.Effect<void, CliFailure> =>
       return
     }
 
+    if (command === 'finalize' && argument !== undefined) {
+      yield* finalizeRun(argument)
+      return
+    }
+
     if (command === 'demo') {
       const reliable = yield* runProvider('reliable', 'print')
       const reliablePassed = yield* verifyRun(reliable.relativeWorkspace)
@@ -212,6 +248,8 @@ const main = (args: readonly string[]): Effect.Effect<void, CliFailure> =>
           ),
         )
       }
+      yield* finalizeRun(reliable.relativeWorkspace)
+      yield* finalizeRun(malicious.relativeWorkspace)
       console.log(`Reliable workspace: ${reliable.relativeWorkspace}`)
       console.log(`Malicious workspace: ${malicious.relativeWorkspace}`)
       return

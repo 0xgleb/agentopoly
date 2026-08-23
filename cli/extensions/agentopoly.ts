@@ -7,7 +7,7 @@ import {
   recordProviderSubmission,
   type ProviderJob,
   type ProviderProfile,
-} from '../../cli/provider-workspace.ts'
+} from '../provider-workspace.ts'
 
 type ToolResult = Readonly<{
   readonly content: readonly Readonly<{ readonly type: 'text'; readonly text: string }>[]

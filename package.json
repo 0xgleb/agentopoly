@@ -13,7 +13,7 @@
     "start": "bun run index.ts",
     "lint": "eslint .",
     "typecheck:runtime": "tsc --noEmit",
-    "typecheck:host": "tsc --project cli/tsconfig.json && tsc --project .pi/tsconfig.json",
+    "typecheck:host": "tsc --project cli/tsconfig.json && tsc --project cli/extensions/tsconfig.json",
     "typecheck": "bun run typecheck:runtime && bun run typecheck:host && tsc --project test/tsconfig.json",
     "test:unit": "bun test --timeout 10000 test/unit",
     "test:integration": "bun test --timeout 30000 test/integration",
