@@ -79,7 +79,7 @@ export const decodeBroadcastResult = (
     parsed['success'] === true &&
     matchesTransfer(parsed, expected) &&
     typeof parsed['txHash'] === 'string' &&
-    parsed['txHash'].trim().length > 0
+    /^[a-f0-9]{64}$/.test(parsed['txHash'])
       ? Effect.succeed({ transactionHash: parsed['txHash'] })
       : Effect.fail(malformed),
   )

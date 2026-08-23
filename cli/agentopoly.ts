@@ -18,6 +18,13 @@ import {
   decodeSignedAgreementWitness,
 } from './agreement-witness.ts'
 import { decodeFinalizePolicy } from './finalize-policy.ts'
+import {
+  derivePaymentReceiptEvent,
+  selectPaymentReceiptToAppend,
+  unavailableFinalizeGateway,
+  validatePaymentReceiptForAuthorization,
+  type FinalizeGateway,
+} from './finalize-gateway.ts'
 import { authorizePayment } from './payment-policy.ts'
 import {
   decodeLatestVerification,
@@ -113,13 +120,16 @@ const collectBoundedOutput = async (stream: ReadableStream<Uint8Array>): Promise
   return new TextDecoder().decode(output)
 }
 
-const appendEvent = (event: Readonly<Record<string, unknown>>): Effect.Effect<void, CliFailure> =>
+const appendEvent = (
+  event: Readonly<Record<string, unknown>>,
+  schemaVersion: 1 | 2 = 1,
+): Effect.Effect<void, CliFailure> =>
   Effect.tryPromise({
     try: async () => {
       await mkdir(join(repositoryRoot, '.tmp'), { recursive: true })
       await appendFile(
         eventsPath,
-        `${JSON.stringify({ ...event, recordedAt: new Date().toISOString(), schemaVersion: 1 })}\n`,
+        `${JSON.stringify({ ...event, recordedAt: new Date().toISOString(), schemaVersion })}\n`,
         'utf8',
       )
     },
@@ -408,7 +418,10 @@ const releaseFinalizeLockBestEffort = (lock: FinalizeLock): Effect.Effect<void> 
     ),
   )
 
-const finalizeRun = (workspaceCandidate: string): Effect.Effect<void, CliFailure> =>
+export const finalizeRun = (
+  workspaceCandidate: string,
+  finalizeGateway: FinalizeGateway = unavailableFinalizeGateway,
+): Effect.Effect<void, CliFailure> =>
   Effect.gen(function* () {
     const workspace = yield* resolveProviderWorkspace(repositoryRoot, workspaceCandidate).pipe(
       Effect.mapError(() =>
@@ -476,7 +489,7 @@ const finalizeRun = (workspaceCandidate: string): Effect.Effect<void, CliFailure
                 eventLog,
                 deriveAgreementObservedEvent(witness),
               ).pipe(Effect.mapError((cause) => failure('verification-failed', cause.reason)))
-              yield* Effect.forEach(agreementEvents, appendEvent, {
+              yield* Effect.forEach(agreementEvents, (event) => appendEvent(event), {
                 concurrency: 1,
                 discard: true,
               })
@@ -512,16 +525,58 @@ const finalizeRun = (workspaceCandidate: string): Effect.Effect<void, CliFailure
               return decision.value
             }),
           )
-          yield* Effect.forEach(events, appendEvent, {
+          if (authorization._tag === 'Right') {
+            const settlement = yield* Effect.either(finalizeGateway.settle(authorization.right))
+            if (settlement._tag === 'Right') {
+              const receipt = yield* validatePaymentReceiptForAuthorization(
+                settlement.right,
+                authorization.right,
+              ).pipe(Effect.mapError((cause) => failure('verification-failed', cause.reason)))
+              const receiptEvents = yield* selectPaymentReceiptToAppend(
+                eventLog,
+                derivePaymentReceiptEvent(receipt, verification.jobId, eventWorkspace),
+              ).pipe(Effect.mapError((cause) => failure('verification-failed', cause.reason)))
+              const reputationEvents = events.filter((event) => event.type === 'reputation.updated')
+              yield* Effect.forEach(receiptEvents, (event) => appendEvent(event, 2), {
+                concurrency: 1,
+                discard: true,
+              })
+              yield* Effect.forEach(reputationEvents, (event) => appendEvent(event), {
+                concurrency: 1,
+                discard: true,
+              })
+              yield* releaseFinalizeLock(ownedLock)
+              console.log(
+                receiptEvents.length === 0
+                  ? 'WDK payment receipt was already recorded; no events were appended.'
+                  : `WDK payment broadcast recorded for attempt ${receipt.attemptId}.`,
+              )
+              return
+            }
+            if (
+              settlement.left._tag === 'reconciliation-pending' ||
+              settlement.left._tag === 'reservation-conflict' ||
+              settlement.left._tag === 'reservation-persistence-failed'
+            ) {
+              yield* releaseFinalizeLock(ownedLock)
+              console.log(`WDK payment reconciliation pending: ${settlement.left.reason}`)
+              return
+            }
+            yield* Effect.forEach(events, (event) => appendEvent(event), {
+              concurrency: 1,
+              discard: true,
+            })
+            yield* releaseFinalizeLock(ownedLock)
+            console.log(`WDK payment safely refused: ${settlement.left.reason}`)
+            return
+          }
+
+          yield* Effect.forEach(events, (event) => appendEvent(event), {
             concurrency: 1,
             discard: true,
           })
           yield* releaseFinalizeLock(ownedLock)
-          console.log(
-            authorization._tag === 'Right'
-              ? 'WDK payment safely refused: broadcast integration is not enabled.'
-              : `WDK payment safely refused: ${authorization.left.reason}`,
-          )
+          console.log(`WDK payment safely refused: ${authorization.left.reason}`)
         }),
       releaseFinalizeLockBestEffort,
     )
@@ -581,9 +636,11 @@ const main = (args: readonly string[]): Effect.Effect<void, CliFailure> =>
     return yield* Effect.fail(failure('invalid-command', 'use agentopoly --help'))
   })
 
-const exit = await Effect.runPromiseExit(main(Bun.argv.slice(2)))
-if (exit._tag === 'Failure') {
-  const cause = exit.cause
-  console.error(`Agentopoly command failed: ${cause.toString()}`)
-  process.exitCode = 1
+if (import.meta.main) {
+  const exit = await Effect.runPromiseExit(main(Bun.argv.slice(2)))
+  if (exit._tag === 'Failure') {
+    const cause = exit.cause
+    console.error(`Agentopoly command failed: ${cause.toString()}`)
+    process.exitCode = 1
+  }
 }

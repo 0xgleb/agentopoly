@@ -83,9 +83,9 @@ A real transfer is allowed only when all are true:
 - no payment receipt, broadcast, or unresolved reservation exists for this authorization key;
 - all evidence is fresh enough for the reviewed policy.
 
-The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the wallet-policy host spawns a planned operator-local Node sidecar over private inherited stdio, and the sidecar launches `wdk-mcp` over its own stdio. The inherited pipe endpoint is the single-parent caller capability. A closed command union allows address, balance, history, a dry-run-only `PaymentPreviewRequest`, and a broadcast-only `ReservedPaymentAttempt`; it never forwards caller-supplied tool names or raw transfer arguments. The exact preview, success, and error response shapes remain untrusted until captured official-package fixtures prove them.
+The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the wallet-policy host owns a narrow injected gateway for an operator-local Node sidecar over private inherited stdio, and the sidecar launches `wdk-mcp` over its own stdio. The default gateway is typed unavailable and starts no process. The inherited pipe endpoint is the single-parent caller capability. A closed command union allows address, balance, history, a dry-run-only `PaymentPreviewRequest`, and a broadcast-only `ReservedPaymentAttempt`; it never forwards caller-supplied tool names or raw transfer arguments. Repository tests use captured official-package response fixtures and injected spies only.
 
-`wdk-mcp` reaches the human-unlocked WDK daemon through its user-scoped Unix socket. `send_token` defaults to dry-run, but the daemon does not enforce confirmation before a direct real send, so the local layer must independently enforce source verification, preview comparison, caps, reservation, and response classification. This design is not evidence that the sidecar is implemented, installed, tested, or safe for wallet use. The Pear worker, browser, provider, and model may never receive an MCP client, daemon socket, passphrase, seed, or command selector. A compromised same-user process can still reach the daemon directly and remains a disclosed residual risk.
+`wdk-mcp` reaches the human-unlocked WDK daemon through its user-scoped Unix socket. `send_token` defaults to dry-run, but the daemon does not enforce confirmation before a direct real send, so the local layer independently enforces source verification, preview comparison, caps, reservation, and response classification before an injected gateway may be called. The repository proves that boundary without installing, unlocking, or starting WDK; it is not evidence of a funded broadcast or live-wallet safety. The Pear worker, browser, provider, and model may never receive an MCP client, daemon socket, passphrase, seed, or command selector. A compromised same-user process can still reach the daemon directly and remains a disclosed residual risk.
 
 ## Required abuse tests before implementation
 
@@ -140,8 +140,8 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 - stale wallet state refuses broadcast;
 - crash while `reserved` but before the durable `broadcasting` marker proves no invocation; returning to `available` still requires a new preview and complete policy evaluation;
 - crash or any non-success after the `broadcasting` marker remains reconciliation-pending;
-- only the fully decoded in-flight success response with its transaction hash identifies the attempt;
-- explicit error, partial response, missing transaction hash, timeout, transport failure, and malformed response all remain unknown and reserved;
+- only the fully decoded in-flight success response with its 64-character lowercase hexadecimal transaction hash identifies the attempt;
+- explicit error, partial response, missing or invalid transaction hash, timeout, transport failure, and malformed response all persist reconciliation-pending and never auto-retry;
 - crash after broadcast but before receipt persistence never treats a tuple-only history match as attempt identity;
 - an unknown result remains reserved without automatic release or retry;
 - failed or disputed verification cannot mint `PaymentAuthorized`;
@@ -161,7 +161,7 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 ### Presentation
 
 - local runtime event-log input is bounded before decoding; malformed, oversized, future, duplicate, and unsupported records produce a bounded refusal or one recorded projection rather than a fabricated economic event;
-- a bounded legacy `receipt.recorded` outer envelope is ignored until a versioned receipt decoder validates it; ignored fields cannot derive payment, settlement, reputation, or raw browser data;
+- a bounded legacy `receipt.recorded` envelope with schema version 1 is ignored; a schema-version-2 receipt must pass the complete decoder or fail closed, and ignored fields cannot derive payment, settlement, reputation, or raw browser data;
 - malformed, partial, expired, duplicate, or non-`live-peer` `capability.observed` records cannot project a capability, remove the capability-discovery absence marker, derive verification or reputation, or authorize a local action;
 - malformed, duplicate, mismatched, or unvalidated `agreement.observed` records cannot project fixed-price terms, reveal signatures, wallet destinations, or full hashes, or authorize payment;
 - local browser client cannot call WDK directly;
