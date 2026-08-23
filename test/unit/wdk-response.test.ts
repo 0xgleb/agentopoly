@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import * as Effect from 'effect/Effect'
 
-import { decodeSourceAddressResult } from '../../cli/wdk-response.ts'
+import {
+  decodeBroadcastResult,
+  decodePreviewResult,
+  decodeSourceAddressResult,
+} from '../../cli/wdk-response.ts'
 
 describe('WDK MCP responses', () => {
   test('decodes the captured get_address result shape', async () => {
@@ -14,6 +18,40 @@ describe('WDK MCP responses', () => {
         }),
       ),
     ).toEqual({ address: '0xbuyer', index: 0, network: 'ethereum-sepolia' })
+  })
+
+  test('binds a WDK preview to the requested destination, amount, and network', async () => {
+    const result = await Effect.runPromise(
+      decodePreviewResult(
+        {
+          content: [
+            {
+              text: '{"preview":true,"network":"ethereum-sepolia","to":"0xprovider","amount":"1500000","estimatedFee":"42"}',
+              type: 'text',
+            },
+          ],
+        },
+        { atomicAmount: '1500000', destination: '0xprovider', network: 'ethereum-sepolia' },
+      ),
+    )
+    expect(result).toEqual({ estimatedNativeFee: '42' })
+  })
+
+  test('binds a WDK broadcast transaction to the exact transfer tuple', async () => {
+    const result = await Effect.runPromise(
+      decodeBroadcastResult(
+        {
+          content: [
+            {
+              text: '{"success":true,"network":"ethereum-sepolia","to":"0xprovider","amount":"1500000","txHash":"abc"}',
+              type: 'text',
+            },
+          ],
+        },
+        { atomicAmount: '1500000', destination: '0xprovider', network: 'ethereum-sepolia' },
+      ),
+    )
+    expect(result).toEqual({ transactionHash: 'abc' })
   })
 
   test('fails closed on an incomplete response', async () => {

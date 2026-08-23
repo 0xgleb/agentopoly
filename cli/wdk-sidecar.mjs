@@ -5,7 +5,11 @@ import { createInterface } from 'node:readline'
 import * as Effect from 'effect/Effect'
 
 import { decodeSidecarCommand } from './wdk-sidecar-contract.ts'
-import { decodeSourceAddressResult } from './wdk-response.ts'
+import {
+  decodeBroadcastResult,
+  decodePreviewResult,
+  decodeSourceAddressResult,
+} from './wdk-response.ts'
 
 const moduleRoot = fileURLToPath(new URL('../', import.meta.url))
 const mcpEntrypoint = new URL('../node_modules/@tetherto/wdk-cli/bin/wdk-mcp.mjs', import.meta.url)
@@ -95,7 +99,19 @@ const callWdkMcp = async (command) => {
         type: command.type,
       }
     }
-    return { result, type: command.type }
+    const expected = {
+      atomicAmount: command.atomicAmount,
+      destination: command.destination,
+      network: command.network,
+    }
+    return {
+      result: await Effect.runPromise(
+        command.type === 'preview-payment'
+          ? decodePreviewResult(result, expected)
+          : decodeBroadcastResult(result, expected),
+      ),
+      type: command.type,
+    }
   } finally {
     child.kill()
   }
