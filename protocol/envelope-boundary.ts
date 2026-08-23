@@ -209,7 +209,7 @@ const validUtf8 = (bytes: Uint8Array): boolean => {
   return true
 }
 
-const sha256 = (input: Uint8Array): Uint8Array => {
+export const hashProtocolBytes = (input: Uint8Array): Uint8Array => {
   const length = Math.ceil((input.length + 9) / 64) * 64
   const bytes = new Uint8Array(length)
   bytes.set(input)
@@ -403,7 +403,7 @@ export const encodeEnvelope = (input: EnvelopeInput): Result<Uint8Array> => {
     input.payload,
     u16(evidence.length),
     evidence,
-    sha256(input.payload),
+    hashProtocolBytes(input.payload),
   ])
   const frame = join([unsigned, u16(input.signature.length), input.signature])
   return frame.length <= frameLimit ? ok(frame) : fail('limit-exceeded')
@@ -491,7 +491,7 @@ export const decodeEnvelope = (
     return fail('malformed-encoding')
   const signature = take(signatureLength)
   if (!signature || offset !== frame.length) return fail('malformed-encoding')
-  if (!equal(payloadHash, sha256(payload))) return fail('invalid-payload-hash')
+  if (!equal(payloadHash, hashProtocolBytes(payload))) return fail('invalid-payload-hash')
   if (expiresAt < sentAt || expiresAt - sentAt > 300) return fail('invalid-field')
   if (sentAt > context.now + 30) return fail('future-clock')
   if (expiresAt < context.now) return fail('expired')
