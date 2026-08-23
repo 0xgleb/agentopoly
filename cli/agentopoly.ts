@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { createHash } from 'node:crypto'
-import { appendFile, copyFile, lstat, mkdir, readFile, realpath } from 'node:fs/promises'
+import { appendFile, copyFile, lstat, mkdir, open, readFile, realpath, rm } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join, relative, resolve } from 'node:path'
 
@@ -12,12 +12,22 @@ import {
   resolveProviderWorkspace,
   type ProviderProfile,
 } from './provider-workspace.ts'
-import { decodeLatestVerification, deriveSettlementEvents } from './settlement.ts'
+import { decodeLatestVerification, selectSettlementEventsToAppend } from './settlement.ts'
 import { redactBoundedVerifierEvidence } from './verification-evidence.ts'
 
 type CliFailure = Readonly<{
-  readonly _tag: 'invalid-command' | 'provider-failed' | 'runtime-io-failed' | 'verification-failed'
+  readonly _tag:
+    | 'invalid-command'
+    | 'provider-failed'
+    | 'runtime-io-failed'
+    | 'settlement-in-progress'
+    | 'verification-failed'
   readonly reason: string
+}>
+
+type FinalizeLock = Readonly<{
+  readonly handle: Awaited<ReturnType<typeof open>>
+  readonly path: string
 }>
 
 type PreparedRun = Readonly<{
@@ -342,6 +352,50 @@ const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailur
     return passed
   })
 
+const acquireFinalizeLock = (workspace: string): Effect.Effect<FinalizeLock, CliFailure> =>
+  Effect.tryPromise({
+    try: async () => {
+      const path = join(workspace, '.agentopoly-finalize.lock')
+      const handle = await open(path, 'wx')
+      return { handle, path }
+    },
+    catch: (cause) =>
+      typeof cause === 'object' && cause !== null && 'code' in cause && cause.code === 'EEXIST'
+        ? failure(
+            'settlement-in-progress',
+            'another finalizer is recording the settlement decision',
+          )
+        : failure('runtime-io-failed', 'could not reserve the settlement decision lock'),
+  })
+
+const releaseFinalizeLock = (lock: FinalizeLock): Effect.Effect<void, CliFailure> =>
+  Effect.tryPromise({
+    try: async () => {
+      await lock.handle.close()
+      await rm(lock.path)
+    },
+    catch: () => failure('runtime-io-failed', 'could not release the settlement decision lock'),
+  })
+
+const releaseFinalizeLockBestEffort = (lock: FinalizeLock): Effect.Effect<void> =>
+  Effect.tryPromise({
+    try: () => lock.handle.close(),
+    catch: () => failure('runtime-io-failed', 'could not close the settlement decision lock'),
+  }).pipe(
+    Effect.catchAll(() => Effect.void),
+    Effect.andThen(
+      Effect.tryPromise({
+        try: () => rm(lock.path, { force: true }),
+        catch: () => failure('runtime-io-failed', 'could not remove the settlement decision lock'),
+      }),
+    ),
+    Effect.catchAll((cause) =>
+      Effect.sync(() => {
+        console.error(`Agentopoly lock cleanup failed: ${cause.reason}`)
+      }),
+    ),
+  )
+
 const finalizeRun = (workspaceCandidate: string): Effect.Effect<void, CliFailure> =>
   Effect.gen(function* () {
     const workspace = yield* resolveProviderWorkspace(repositoryRoot, workspaceCandidate).pipe(
@@ -355,21 +409,34 @@ const finalizeRun = (workspaceCandidate: string): Effect.Effect<void, CliFailure
       catch: () =>
         failure('runtime-io-failed', 'could not establish the verified workspace identity'),
     })
-    const eventLog = yield* Effect.tryPromise({
-      try: () => readFile(eventsPath, 'utf8'),
-      catch: () => failure('runtime-io-failed', 'live event log is unavailable'),
-    })
-    const verification = yield* decodeLatestVerification(eventLog, eventWorkspace).pipe(
-      Effect.mapError((cause) => failure('verification-failed', cause.reason)),
-    )
-    yield* Effect.forEach(deriveSettlementEvents(verification), appendEvent, {
-      concurrency: 1,
-      discard: true,
-    })
-    console.log(
-      verification.passed
-        ? 'WDK payment safely refused: exact local payment authorization is absent.'
-        : 'WDK payment safely refused: provider verification failed.',
+    yield* Effect.acquireUseRelease(
+      acquireFinalizeLock(workspace),
+      (ownedLock) =>
+        Effect.gen(function* () {
+          const eventLog = yield* Effect.tryPromise({
+            try: () => readFile(eventsPath, 'utf8'),
+            catch: () => failure('runtime-io-failed', 'live event log is unavailable'),
+          })
+          const verification = yield* decodeLatestVerification(eventLog, eventWorkspace).pipe(
+            Effect.mapError((cause) => failure('verification-failed', cause.reason)),
+          )
+          const events = yield* selectSettlementEventsToAppend(eventLog, verification).pipe(
+            Effect.mapError((cause) => failure('verification-failed', cause.reason)),
+          )
+          yield* Effect.forEach(events, appendEvent, {
+            concurrency: 1,
+            discard: true,
+          })
+          yield* releaseFinalizeLock(ownedLock)
+          console.log(
+            events.length === 0
+              ? 'Settlement refusal was already recorded; no events were appended.'
+              : verification.passed
+                ? 'WDK payment safely refused: exact local payment authorization is absent.'
+                : 'WDK payment safely refused: provider verification failed.',
+          )
+        }),
+      releaseFinalizeLockBestEffort,
     )
   })
 
