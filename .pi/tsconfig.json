@@ -1,8 +1,0 @@
-{
-  "extends": "../tsconfig.json",
-  "compilerOptions": {
-    "lib": ["ESNext"],
-    "types": ["node"]
-  },
-  "include": ["./extensions/**/*.ts", "../cli/provider-workspace.ts"]
-}
