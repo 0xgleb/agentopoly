@@ -151,6 +151,7 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 
 ### Arbitration
 
+- a malformed, cross-job, duplicate, replayed, or stale dispute bundle is rejected before any original or arbitrator WDK path;
 - evidence from another job cannot enter the bundle;
 - missing party signature is visible and cannot be invented;
 - ruling references only supplied evidence hashes;
