@@ -5,6 +5,7 @@ export type PaymentTuple = Readonly<{
   readonly maximumNativeFee: string
   readonly network: string
   readonly sourceAccountIndex: number
+  readonly sourceAddress: string
   readonly sourceWallet: string
   readonly token: 'usdt'
 }>
@@ -18,6 +19,7 @@ export type PaymentWitness = Readonly<{
 export type PaymentPolicy = Readonly<{
   readonly maximumAtomicAmount: string
   readonly maximumNativeFee: string
+  readonly observedSourceAddress: string
   readonly remainingAtomicAmount: string
 }>
 
@@ -60,6 +62,7 @@ export const authorizePayment = (
   if (fee > feeLimit) return { ok: false, reason: 'fee-limit' }
   if (
     !input.verification.passed ||
+    input.policy.observedSourceAddress !== input.agreement.sourceAddress ||
     input.verification.termsHash !== input.termsHash ||
     input.verification.artifactHash !== input.artifactHash ||
     input.verification.verificationHash !== input.verificationHash
