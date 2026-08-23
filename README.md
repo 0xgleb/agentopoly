@@ -1,105 +1,93 @@
 # Agentopoly
 
-**A peer-to-peer economy for autonomous agents.**
+**Hire an independent software agent on fixed signed terms, verify the delivered artifact, and retain local economic evidence.**
 
-Agents advertise capabilities, discover counterparties, request work, negotiate prices, perform services, verify results, settle directly in USDt, and retain signed receipts. When a result is disputed, the parties can hire another agent to inspect the same evidence, issue a ruling, and get paid for that service.
+Agentopoly is a peer-to-peer agent economy hackathon project. A buyer discovers a provider, agrees an exact USDt-priced job, runs an objective verifier, and lets only local policy consider settlement. It is not a shared orchestrator and does not give peers, models, or browsers wallet authority.
 
-```mermaid
-flowchart LR
-  Discover --> Request --> Quote --> Agree --> Execute --> Verify --> Pay --> Receipt
-```
+Pendle uses market dynamics to turn variable-rate yield into a fixed-income product. Agentopoly applies a similar idea to software work: competing agents, fixed signed terms, objective verification, and local settlement turn uncertain project costs into a fixed-price deliverable. This analogy concerns market structure, not identical mechanics or risks.
 
 ```mermaid
 flowchart LR
-  FailedVerification["Verification fails"] --> Withhold["Withhold provider payment"] --> HireArbitrator["Hire arbitrator"] --> SubmitEvidence["Submit evidence"] --> Ruling
-  Ruling --> PayArbitrator["Pay arbitrator separately"]
-  Ruling --> LocalDecision["Local settlement decision"]
-  LocalDecision -. "all signed policy and wallet witnesses pass" .-> ProviderSettlement["Optional provider settlement"]
-  LocalDecision --> PreserveRefusal["Preserve refusal and ruling evidence"]
+  Discover[Pear capability discovery] --> Terms[Exact signed terms]
+  Terms --> Provider[Bounded Pi provider]
+  Provider --> Artifact[Delivered artifact]
+  Artifact --> Verify[Fixed objective verifier]
+  Verify --> Policy[Local USDt policy]
+  Policy --> Refusal[Typed refusal or durable reservation]
+  Refusal --> Browser[Local browser projection]
 ```
 
-## Status
+## What runs today
 
-Agentopoly is an active hackathon build. The specification, architecture, threat model, roadmap, and GitHub issues define the implementation contract. The operator-local WDK sidecar and wallet path are planned boundaries, not current implementation or wallet-readiness evidence; no wallet capability starts during the documented setup or quality gates.
+- **Pear** supplies independent local peer discovery and the real local discovery proof.
+- **Pi** runs the first provider inside a repository-confined fixture workspace with only reviewed inspect and submit tools.
+- **Verification** hashes the delivered artifact, runs the fixed acceptance contract, bounds and redacts evidence, and records a strict local result.
+- **WDK Track 1 boundary** uses pinned `@tetherto/wdk` `^1.0.0-beta.16` and `@tetherto/wdk-cli` `1.0.0-beta.3` contracts. A signed agreement witness, exact terms/artifact/verification bindings, source, limits, preview, and durable reservation are required before any future broadcast boundary.
+- **Solid browser projection** renders bounded local evidence; it does not own protocol, policy, transport, or wallet decisions.
 
-## The product distinction
+The current `finalize` path verifies the agreement and policy, then records a typed refusal because broadcast integration is disabled.
 
-Most multi-agent systems answer: "Which agent controlled by this orchestrator should perform the work?"
+## Reproduce the local evidence path
 
-Agentopoly answers: "Which independently operated agent should I hire, on what signed terms, how will I verify the result, and what economic evidence remains afterward?"
+From a clean clone with no inherited `.env`, credentials, wallet socket, `.direnv`, `node_modules`, or build output:
 
-No central process is authoritative for participant identity, negotiation, verification, payment, or arbitration. Each participant applies its own local policy before it accepts work or moves money.
-
-## First demo service
-
-The first service is a deterministic coding task:
-
-| Field      | Contract                                                              |
-| ---------- | --------------------------------------------------------------------- |
-| Task       | Make the supplied implementation pass the supplied tests              |
-| Price      | A tiny fixed USDt amount                                              |
-| Acceptance | The named test command exits successfully against the delivered patch |
-
-The artifact is tangible, the verifier is objective, and successful verification can produce a typed payment authorization. A second deterministic fixture creates a genuine evidence-backed dispute for the arbitration demo.
-
-## Partner technology fit
-
-- **Pear:** standalone participant runtime, peer discovery and transport, P2P installation, seeding, and OTA updates.
-- **WDK:** planned operator-local dedicated-wallet access, transfer preview, guarded USDt settlement, and transaction history.
-- **QVAC:** optional local or delegated inference only after the core transaction is reliable.
-- **x402:** optional interoperability for advertised HTTP services; not the native P2P transport.
-
-See [Partner technology research](./docs/partner-technology-research.md) for verified facts, unresolved integration constraints, and source links.
-
-## Non-negotiable product invariants
-
-1. Peer input, delivered artifacts, model output, wallet responses, and persisted evidence are untrusted at their boundaries.
-2. A remote peer can propose work and terms; it can never directly authorize a local wallet operation.
-3. Payment requires the exact canonical tuple and evidence witnesses defined in [SPEC.md](./SPEC.md#economic-representation): source, destination, asset and token contract, network, integer atomic amount, native-fee cap, expiry, terms, artifact, verification, and policy.
-4. Monetary values use integer atomic units, never floating point.
-5. Arbitration is an ordinary paid service, not a privileged control plane.
-6. Signed terms and receipts prove what happened; they do not pretend to eliminate provider-side non-payment risk.
-7. Every completed checkpoint must remain independently presentable.
-
-## Design pack
-
-- [SPEC.md](./SPEC.md) - buildable product and protocol contract
-- [ROADMAP.md](./ROADMAP.md) - ordered, demoable checkpoints
-- [AGENTS.md](./AGENTS.md) - repository rules for human and AI contributors
-- [CONTRIBUTING.md](./CONTRIBUTING.md) - test-first delivery workflow
-- [Architecture](./docs/architecture.md) - boundaries, components, and data flow
-- [Threat model](./docs/threat-model.md) - assets, STRIDE analysis, and required abuse tests
-- [Partner technology research](./docs/partner-technology-research.md) - current official documentation notes
-- [Demo contract](./docs/demo-contract.md) - what judges must see and what may be prerecorded
-- [GitHub issues](https://github.com/0xgleb/agentopoly/issues) - PR-sized execution backlog
-
-## Explicit non-goals for the hackathon
-
-- Escrow or a new smart contract
-- A token
-- Global consensus or a globally authoritative marketplace state
-- Blockchain-native reputation
-- Mandatory use of any one agent harness or model provider
-- QVAC or x402 in the critical path
-
-## Development
-
-From a clean clone:
-
-```console
+```nu
+git clone https://github.com/0xgleb/agentopoly.git agentopoly
+cd agentopoly
 direnv allow
 bun install --frozen-lockfile
 bun run check
 nix flake check --no-write-lock-file
 ```
 
-`direnv` enters the pinned Nix shell. Bun is the only JavaScript package manager. `.env.example` documents variable names without values; no wallet process or secret-bearing integration starts during these quality checks.
+Run the independent local Pear proof separately from the CI integration suite:
 
-## Build discipline
+```nu
+bun run test:integration:pear
+```
 
-1. **Project behavior:** change the specification and one problem-only GitHub issue, write a compiling failing test, then implement the smallest vertical slice.
-2. **Reused input:** only attributable official sponsor or hackathon boilerplate may be reused; record its source and review every local modification. The judged Agentopoly protocol, wallet policy, and WDK integration remain project work.
-3. **Generated material:** lockfiles and build output must be reproducible from reviewed manifests and pinned Nix inputs; generated output is never edited as source.
-4. **Dependencies:** add or remove JavaScript packages only with Bun, review their authority boundary and lifecycle scripts, and commit the resulting lockfile.
-5. **Version control:** use GitButler for every repository write and keep each PR scoped to one linked issue.
-6. **Publication:** publish only verified claims after the focused tests and the authoritative gates in [CONTRIBUTING.md](./CONTRIBUTING.md#authoritative-quality-commands) pass.
+Run a real bounded provider, then complete the reviewed workspace-bound signed-agreement workflow before rehearsal:
+
+```nu
+bun run agentopoly provider reliable-provider --print "Implement the reviewed fixture exactly."
+nu scripts/rehearse-recorded-demo.nu settle .tmp/agentopoly-runs/<workspace>
+bun run dev
+```
+
+The rehearsal verifies the workspace, calls `finalize` twice, and refuses if the second call appends evidence. It writes only bounded non-secret summaries. `bun run dev` serves the local browser projection and `/api/projection`.
+
+See the [submission evidence manifest](./docs/submission-evidence.md) and [recording rehearsal](./docs/recording-rehearsal.md) for the exact preconditions and evidence boundaries.
+
+## Safety witnesses and source evidence
+
+Settlement is local and fail-closed. The boundary code is directly inspectable:
+
+- [exact payment policy](./cli/payment-policy.ts)
+- [closed preview/broadcast command contract](./cli/wdk-sidecar-contract.ts)
+- [durable payment reservation state](./cli/payment-reservation.ts)
+- [single-use preview binding](./cli/wdk-preview-registry.ts)
+- [strict agreement witness](./cli/agreement-witness.ts)
+- [threat model](./docs/threat-model.md)
+
+A remote peer can propose work or terms but cannot authorize a local wallet operation. Values are integer atomic units; an equivalent-looking destination, network, token, amount, fee, terms, artifact, or verification hash is not accepted.
+
+## Current limits
+
+Agentopoly does **not** yet claim:
+
+- a funded WDK broadcast, chain observation, or final receipt proof;
+- paid arbitration;
+- escrow;
+- global reputation; or
+- a recorded submission video.
+
+Local reputation is evidence-backed local projection, not a global score. There is no escrow, so provider-side non-payment risk remains.
+
+## Project references
+
+- [Specification](./SPEC.md)
+- [Architecture](./docs/architecture.md)
+- [Threat model](./docs/threat-model.md)
+- [Demo contract](./docs/demo-contract.md)
+- [Submission evidence](./docs/submission-evidence.md)
+- [GitHub issues](https://github.com/0xgleb/agentopoly/issues)
