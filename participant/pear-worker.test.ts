@@ -16,15 +16,16 @@ const createReadySidecar = () => {
   let closeListener: (() => void) | undefined
   let closeQueued = false
   let destroys = 0
-  const queuedData: string[] = []
+  const queuedData: (string | Uint8Array)[] = []
+  const writes: Uint8Array[] = []
 
-  const emit = (message: string): void => {
+  const emit = (message: string | Uint8Array): void => {
     if (dataListener === undefined) {
       queuedData.push(message)
       return
     }
 
-    dataListener(new TextEncoder().encode(message))
+    dataListener(typeof message === 'string' ? new TextEncoder().encode(message) : message)
   }
 
   const sidecar: PearSidecar = {
@@ -41,6 +42,9 @@ const createReadySidecar = () => {
       if (closeQueued) {
         closeListener()
       }
+    },
+    write: (data) => {
+      writes.push(data)
     },
   }
 
@@ -59,6 +63,7 @@ const createReadySidecar = () => {
     },
     sidecar,
     getDestroys: () => destroys,
+    getWrites: () => writes,
   }
 }
 
@@ -107,6 +112,115 @@ describe('Pear worker boundary', () => {
     expect(runtimeDirectory).toBe('/local/participant-data')
     expect(fakeSidecar.getDestroys()).toBe(1)
     expect(closed).toBe(1)
+  })
+
+  test('refuses to advertise before the Bare worker is ready', async () => {
+    const fakeSidecar = createReadySidecar()
+    const createRuntime = (): PearRuntime => ({
+      close: () => Promise.resolve(),
+      ready: () => Promise.resolve(),
+      run: () => fakeSidecar.sidecar,
+    })
+    const worker = createPearWorker(
+      {
+        dataDirectory: PearDataDirectory('/local/participant-data'),
+        startupTimeout: Duration.seconds(1),
+        workerEntrypoint: BareWorkerEntrypoint('participant/worker.js'),
+      },
+      createRuntime,
+    )
+
+    const result = await Effect.runPromise(Effect.either(worker.advertise(Uint8Array.of(1))))
+
+    expect(result).toMatchObject({
+      _tag: 'Left',
+      left: { _tag: 'worker-start-failed', reason: 'Pear worker is not ready to advertise' },
+    })
+  })
+
+  test('writes a bounded framed advertisement only after the Bare worker is ready', async () => {
+    const fakeSidecar = createReadySidecar()
+    const createRuntime = (): PearRuntime => ({
+      close: () => Promise.resolve(),
+      ready: () => Promise.resolve(),
+      run: () => {
+        queueMicrotask(fakeSidecar.emitReady)
+        return fakeSidecar.sidecar
+      },
+    })
+    const worker = createPearWorker(
+      {
+        dataDirectory: PearDataDirectory('/local/participant-data'),
+        startupTimeout: Duration.seconds(1),
+        workerEntrypoint: BareWorkerEntrypoint('participant/worker.js'),
+      },
+      createRuntime,
+    )
+
+    await Effect.runPromise(worker.start)
+    await Effect.runPromise(worker.advertise(Uint8Array.of(1, 2)))
+
+    expect(Array.from(fakeSidecar.getWrites()[0] ?? [])).toEqual([1, 0, 0, 0, 2, 1, 2])
+  })
+
+  test('sends a bounded peer frame to the injected protocol admission boundary', async () => {
+    const fakeSidecar = createReadySidecar()
+    const admittedFrames: Uint8Array[] = []
+    const createRuntime = (): PearRuntime => ({
+      close: () => Promise.resolve(),
+      ready: () => Promise.resolve(),
+      run: () => {
+        queueMicrotask(fakeSidecar.emitReady)
+        return fakeSidecar.sidecar
+      },
+    })
+    const worker = createPearWorker(
+      {
+        dataDirectory: PearDataDirectory('/local/participant-data'),
+        peerFrameAdmission: (frame) => {
+          admittedFrames.push(frame)
+          return { ok: false, error: 'malformed-encoding' }
+        },
+        startupTimeout: Duration.seconds(1),
+        workerEntrypoint: BareWorkerEntrypoint('participant/worker.js'),
+      },
+      createRuntime,
+    )
+
+    await Effect.runPromise(worker.start)
+    fakeSidecar.emit(Uint8Array.of(2, 0, 0, 0, 2, 8, 9))
+
+    expect(admittedFrames.map((frame) => Array.from(frame))).toEqual([[8, 9]])
+  })
+
+  test('drops a worker frame with an unsigned length above the protocol cap', async () => {
+    const fakeSidecar = createReadySidecar()
+    const admittedFrames: Uint8Array[] = []
+    const createRuntime = (): PearRuntime => ({
+      close: () => Promise.resolve(),
+      ready: () => Promise.resolve(),
+      run: () => {
+        queueMicrotask(fakeSidecar.emitReady)
+        return fakeSidecar.sidecar
+      },
+    })
+    const worker = createPearWorker(
+      {
+        dataDirectory: PearDataDirectory('/local/participant-data'),
+        peerFrameAdmission: (frame) => {
+          admittedFrames.push(frame)
+          return { ok: false, error: 'malformed-encoding' }
+        },
+        startupTimeout: Duration.seconds(1),
+        workerEntrypoint: BareWorkerEntrypoint('participant/worker.js'),
+      },
+      createRuntime,
+    )
+
+    await Effect.runPromise(worker.start)
+    fakeSidecar.emit(Uint8Array.of(2, 255, 255, 255, 255))
+
+    expect(admittedFrames).toEqual([])
   })
 
   test('accepts a split readiness frame from the Bare worker', async () => {

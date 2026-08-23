@@ -22,8 +22,9 @@
   "include": [
     "economy/**/*.ts",
     "index.ts",
+    "market/**/*.ts",
     "participant/pear-runtime-module.d.ts",
     "protocol/**/*.ts"
   ],
-  "exclude": ["coverage", "dist", "node_modules"]
+  "exclude": ["coverage", "dist", "node_modules", "market/**/*.test.ts"]
 }

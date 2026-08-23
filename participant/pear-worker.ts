@@ -10,6 +10,7 @@ import {
   type WorkerShutdownFailure,
   type WorkerStartFailure,
 } from './participant.ts'
+import type { ProtocolEnvelope, Result } from '../protocol/envelope-boundary.ts'
 
 export type PearDataDirectory = string & Brand.Brand<'PearDataDirectory'>
 export const PearDataDirectory = Brand.refined<PearDataDirectory>(
@@ -23,8 +24,25 @@ export const BareWorkerEntrypoint = Brand.refined<BareWorkerEntrypoint>(
   () => Brand.error('Bare worker entrypoint must be non-empty'),
 )
 
+export type PeerFrameAdmission = (frame: Uint8Array) => Result<ProtocolEnvelope>
+
+export type LocalDhtBootstrap = string & Brand.Brand<'LocalDhtBootstrap'>
+export const LocalDhtBootstrap = Brand.refined<LocalDhtBootstrap>(
+  (value) =>
+    /^127\.0\.0\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$/.test(
+      value,
+    ),
+  () => Brand.error('local DHT bootstrap must be a loopback IPv4 endpoint with a valid port'),
+)
+
+export type LocalDiscoveryRole = 'client' | 'server'
+
 export type PearWorkerOptions = Readonly<{
   readonly dataDirectory: PearDataDirectory
+  readonly localDhtBootstrap?: LocalDhtBootstrap
+  readonly localDiscoveryRole?: LocalDiscoveryRole
+  readonly onAcceptedPeerEnvelope?: (envelope: ProtocolEnvelope) => void
+  readonly peerFrameAdmission?: PeerFrameAdmission
   readonly startupTimeout: Duration.Duration
   readonly workerEntrypoint: BareWorkerEntrypoint
 }>
@@ -32,18 +50,24 @@ export type PearWorkerOptions = Readonly<{
 export type PearSidecar = Readonly<{
   readonly destroy: () => void
   readonly on: (event: 'data', listener: (data: Uint8Array) => void) => void
+  readonly write?: (data: Uint8Array) => void
   readonly once: (event: 'close', listener: () => void) => void
 }>
 
 export type PearRuntime = Readonly<{
   readonly close: () => Promise<void>
   readonly ready: () => Promise<void>
-  readonly run: (entrypoint: BareWorkerEntrypoint) => PearSidecar
+  readonly run: (entrypoint: BareWorkerEntrypoint, args?: readonly string[]) => PearSidecar
 }>
 
 export type PearRuntimeFactory = (
   options: Readonly<{ readonly dir: PearDataDirectory }>,
 ) => PearRuntime
+
+export type PearCapabilityWorker = ParticipantWorker &
+  Readonly<{
+    readonly advertise: (frame: Uint8Array) => Effect.Effect<void, WorkerStartFailure>
+  }>
 
 type PearLifecycle = 'created' | 'starting' | 'running' | 'stopping' | 'stopped'
 
@@ -61,17 +85,52 @@ const workerShutdownFailure = (reason: string): WorkerShutdownFailure => ({
   reason: FailureReason(reason),
 })
 
-const startSidecar = (sidecar: PearSidecar): Effect.Effect<void, WorkerStartFailure> =>
+const startSidecar = (
+  sidecar: PearSidecar,
+  peerFrameAdmission: PeerFrameAdmission | undefined,
+  onAcceptedPeerEnvelope: ((envelope: ProtocolEnvelope) => void) | undefined,
+): Effect.Effect<void, WorkerStartFailure> =>
   Effect.async((resume) => {
     const decoder = new TextDecoder()
     const encoder = new TextEncoder()
     let buffered = ''
+    let peerFrames = new Uint8Array()
+    let ready = false
 
     const fail = (reason: string): void => {
       resume(Effect.fail(workerStartFailure(reason)))
     }
 
+    const receivePeerFrames = (data: Uint8Array): void => {
+      const combined = new Uint8Array(peerFrames.byteLength + data.byteLength)
+      combined.set(peerFrames)
+      combined.set(data, peerFrames.byteLength)
+      peerFrames = combined
+      if (peerFrames.byteLength > 65_541) {
+        peerFrames = new Uint8Array()
+        return
+      }
+
+      while (peerFrames.byteLength >= 5) {
+        const length = new DataView(peerFrames.buffer, peerFrames.byteOffset + 1, 4).getUint32(0)
+        if (peerFrames[0] !== 2 || length > 65_536) {
+          peerFrames = new Uint8Array()
+          return
+        }
+        if (peerFrames.byteLength < length + 5) return
+        const frame = peerFrames.slice(5, length + 5)
+        peerFrames = peerFrames.slice(length + 5)
+        const admitted = peerFrameAdmission?.(frame)
+        if (admitted?.ok) onAcceptedPeerEnvelope?.(admitted.value)
+      }
+    }
+
     const onData = (data: Uint8Array): void => {
+      if (ready) {
+        receivePeerFrames(data)
+        return
+      }
+
       buffered += decoder.decode(data, { stream: true })
 
       if (encoder.encode(buffered).byteLength > maximumStartupFrameBytes) {
@@ -88,6 +147,7 @@ const startSidecar = (sidecar: PearSidecar): Effect.Effect<void, WorkerStartFail
       const frame = buffered.slice(0, newline)
 
       if (frame === readyMessage) {
+        ready = true
         resume(Effect.void)
         return
       }
@@ -110,9 +170,17 @@ const startSidecar = (sidecar: PearSidecar): Effect.Effect<void, WorkerStartFail
 const createDefaultRuntime: PearRuntimeFactory = (options) => new PearRuntimeHost(options)
 
 export const createPearWorker = (
-  { dataDirectory, startupTimeout, workerEntrypoint }: PearWorkerOptions,
+  {
+    dataDirectory,
+    localDhtBootstrap,
+    localDiscoveryRole,
+    onAcceptedPeerEnvelope,
+    peerFrameAdmission,
+    startupTimeout,
+    workerEntrypoint,
+  }: PearWorkerOptions,
   createRuntime: PearRuntimeFactory = createDefaultRuntime,
-): ParticipantWorker => {
+): PearCapabilityWorker => {
   let lifecycle: PearLifecycle = 'created'
   let runtime: PearRuntime | undefined
   let sidecar: PearSidecar | undefined
@@ -189,6 +257,31 @@ export const createPearWorker = (
   ): Effect.Effect<never, WorkerStartFailure> =>
     Effect.zipRight(Effect.either(shutdown()), Effect.fail(failure))
 
+  const advertise = (frame: Uint8Array): Effect.Effect<void, WorkerStartFailure> =>
+    Effect.suspend(() => {
+      const sidecarToAdvertise = sidecar
+      const write = sidecarToAdvertise?.write
+      if (lifecycle !== 'running' || sidecarToAdvertise === undefined || write === undefined) {
+        return Effect.fail(workerStartFailure('Pear worker is not ready to advertise'))
+      }
+
+      if (frame.byteLength > 65_536) {
+        return Effect.fail(workerStartFailure('Pear advertisement frame exceeded 65536 bytes'))
+      }
+
+      const command = new Uint8Array(frame.byteLength + 5)
+      command[0] = 1
+      new DataView(command.buffer).setUint32(1, frame.byteLength)
+      command.set(frame, 5)
+
+      return Effect.try({
+        try: () => {
+          write.call(sidecarToAdvertise, command)
+        },
+        catch: () => workerStartFailure('could not write advertisement to Pear worker'),
+      })
+    })
+
   const start: Effect.Effect<void, WorkerStartFailure> = Effect.suspend(() => {
     if (lifecycle !== 'created') {
       return Effect.fail(workerStartFailure('Pear worker cannot start after shutdown'))
@@ -219,12 +312,16 @@ export const createPearWorker = (
         }
 
         const createdSidecar = yield* Effect.try({
-          try: () => createdRuntime.run(workerEntrypoint),
+          try: () =>
+            createdRuntime.run(workerEntrypoint, [
+              ...(localDhtBootstrap === undefined ? [] : [localDhtBootstrap]),
+              ...(localDiscoveryRole === undefined ? [] : [localDiscoveryRole]),
+            ]),
           catch: () => workerStartFailure('could not start Pear worker'),
         })
         sidecar = createdSidecar
 
-        yield* startSidecar(createdSidecar).pipe(
+        yield* startSidecar(createdSidecar, peerFrameAdmission, onAcceptedPeerEnvelope).pipe(
           Effect.timeoutFail({
             duration: startupTimeout,
             onTimeout: () => workerStartFailure('Pear worker readiness timed out'),
@@ -243,5 +340,5 @@ export const createPearWorker = (
     )
   })
 
-  return { start, shutdown: shutdown() }
+  return { advertise, start, shutdown: shutdown() }
 }
