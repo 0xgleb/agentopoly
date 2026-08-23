@@ -33,9 +33,10 @@ No money-moving implementation may start until its abuse tests exist and fail fo
 9. Sidecar closed command -> WDK MCP and daemon
 10. WDK/history response -> typed settlement outcome
 11. Stored record or migration snapshot -> replayed state
-12. Local browser command -> local application command
-13. Original dispute evidence -> arbitrator input
-14. Arbitrator output -> ruling artifact
+12. Local runtime event log -> bounded browser projection API
+13. Local browser command -> local application command
+14. Original dispute evidence -> arbitrator input
+15. Arbitrator output -> ruling artifact
 
 ## STRIDE analysis
 
@@ -149,6 +150,7 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 
 ### Presentation
 
+- local runtime event-log input is bounded before decoding; malformed, oversized, future, duplicate, and unsupported records produce a bounded refusal or one recorded projection rather than a fabricated economic event;
 - local browser client cannot call WDK directly;
 - stale projection is visibly stale and cannot authorize a command;
 - redacted evidence cannot be expanded by a client query;

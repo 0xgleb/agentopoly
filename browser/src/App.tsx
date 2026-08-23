@@ -1,0 +1,246 @@
+import { For, Show, createResource, onCleanup, onMount } from 'solid-js'
+
+import * as Effect from 'effect/Effect'
+
+import type { BrowserProjection, BrowserProjectionResult } from '../projection.ts'
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isFreshness = (value: unknown): value is 'current' | 'stale' =>
+  value === 'current' || value === 'stale'
+
+const isVerification = (value: unknown): value is 'failed' | 'passed' | 'unobserved' =>
+  value === 'failed' || value === 'passed' || value === 'unobserved'
+
+const isPaymentReason = (
+  value: unknown,
+): value is 'missing-exact-payment-authorization' | 'verification-failed' =>
+  value === 'missing-exact-payment-authorization' || value === 'verification-failed'
+
+const isEventType = (
+  value: unknown,
+): value is
+  | 'payment.refused'
+  | 'provider.artifact-submitted'
+  | 'provider.started'
+  | 'reputation.updated'
+  | 'settlement.refusal-recorded'
+  | 'verification.completed' =>
+  value === 'payment.refused' ||
+  value === 'provider.artifact-submitted' ||
+  value === 'provider.started' ||
+  value === 'reputation.updated' ||
+  value === 'settlement.refusal-recorded' ||
+  value === 'verification.completed'
+
+const decodeProjection = (value: unknown): BrowserProjectionResult | undefined => {
+  if (!isRecord(value) || (value['_tag'] !== 'projection' && value['_tag'] !== 'refused')) {
+    return undefined
+  }
+  if (value['_tag'] === 'refused' && typeof value['reason'] === 'string') {
+    return { _tag: 'refused', reason: 'malformed-event-log' }
+  }
+  if (
+    !Array.isArray(value['agents']) ||
+    !Array.isArray(value['events']) ||
+    !Array.isArray(value['jobs']) ||
+    !Array.isArray(value['unobserved'])
+  ) {
+    return undefined
+  }
+
+  const agents: BrowserProjection['agents'][number][] = value['agents'].flatMap((agent) =>
+    isRecord(agent) &&
+    typeof agent['profile'] === 'string' &&
+    agent['role'] === 'provider' &&
+    agent['source'] === 'live-agent-run'
+      ? [
+          {
+            profile: agent['profile'],
+            role: 'provider' as const,
+            source: 'live-agent-run' as const,
+          },
+        ]
+      : [],
+  )
+  const events: BrowserProjection['events'][number][] = value['events'].flatMap((event) =>
+    isRecord(event) &&
+    typeof event['jobId'] === 'string' &&
+    typeof event['recordedAt'] === 'string' &&
+    isFreshness(event['freshness']) &&
+    isEventType(event['type'])
+      ? [
+          {
+            freshness: event['freshness'],
+            jobId: event['jobId'],
+            recordedAt: event['recordedAt'],
+            type: event['type'],
+          },
+        ]
+      : [],
+  )
+  const jobs: BrowserProjection['jobs'][number][] = value['jobs'].flatMap((job) => {
+    if (
+      !isRecord(job) ||
+      typeof job['jobId'] !== 'string' ||
+      typeof job['workspace'] !== 'string' ||
+      !isVerification(job['verification']) ||
+      !isRecord(job['payment'])
+    ) {
+      return []
+    }
+
+    const payment = job['payment']
+    const projectedPayment =
+      payment['_tag'] === 'not-recorded'
+        ? { _tag: 'not-recorded' as const }
+        : payment['_tag'] === 'refused' &&
+            isPaymentReason(payment['reason']) &&
+            payment['wdkInvoked'] === false
+          ? { _tag: 'refused' as const, reason: payment['reason'], wdkInvoked: false as const }
+          : undefined
+    if (projectedPayment === undefined) return []
+
+    return [
+      {
+        ...(typeof job['artifactHash'] === 'string' ? { artifactHash: job['artifactHash'] } : {}),
+        jobId: job['jobId'],
+        payment: projectedPayment,
+        ...(typeof job['providerProfile'] === 'string'
+          ? { providerProfile: job['providerProfile'] }
+          : {}),
+        verification: job['verification'],
+        workspace: job['workspace'],
+      },
+    ]
+  })
+
+  if (
+    agents.length !== value['agents'].length ||
+    events.length !== value['events'].length ||
+    jobs.length !== value['jobs'].length ||
+    value['unobserved'].length !== 3 ||
+    value['unobserved'][0] !== 'capability discovery' ||
+    value['unobserved'][1] !== 'signed terms' ||
+    value['unobserved'][2] !== 'arbitration'
+  ) {
+    return undefined
+  }
+
+  return {
+    _tag: 'projection',
+    agents,
+    events,
+    jobs,
+    unobserved: ['capability discovery', 'signed terms', 'arbitration'],
+  }
+}
+
+const fetchProjection = (): Promise<BrowserProjectionResult> =>
+  Effect.runPromise(
+    Effect.match(
+      Effect.tryPromise({
+        try: () => fetch('/api/projection').then((response) => response.json()),
+        catch: () => 'projection-unavailable',
+      }),
+      {
+        onFailure: () => ({ _tag: 'refused', reason: 'malformed-event-log' }) as const,
+        onSuccess: (value) =>
+          decodeProjection(value) ?? { _tag: 'refused', reason: 'malformed-event-log' },
+      },
+    ),
+  )
+
+export const App = () => {
+  const [projection, { refetch }] = createResource(fetchProjection)
+
+  onMount(() => {
+    const interval = window.setInterval(() => void refetch(), 2_000)
+    onCleanup(() => window.clearInterval(interval))
+  })
+
+  return (
+    <main class="dashboard">
+      <header class="dashboard__header">
+        <p class="eyebrow">Agentopoly / local browser projection</p>
+        <h1>Observed agent economy</h1>
+        <button type="button" onClick={() => void refetch()}>
+          Refresh evidence
+        </button>
+      </header>
+      <Show when={projection.loading}>
+        <p role="status">Refreshing the bounded local projection…</p>
+      </Show>
+      <Show when={projection()} keyed>
+        {(result) => (
+          <Show
+            when={result._tag === 'projection' ? result : undefined}
+            fallback={
+              <p role="alert">
+                Projection refused:{' '}
+                {result._tag === 'refused' ? result.reason : 'projection unavailable'}
+              </p>
+            }
+          >
+            {(snapshot) => (
+              <section class="dashboard__grid" aria-label="Agentopoly economy projection">
+                <article>
+                  <h2>Observed providers</h2>
+                  <Show
+                    when={snapshot().agents.length > 0}
+                    fallback={<p>No provider runtime has been observed.</p>}
+                  >
+                    <ul>
+                      <For each={snapshot().agents}>
+                        {(agent) => <li>{agent.profile} · provider runtime profile</li>}
+                      </For>
+                    </ul>
+                  </Show>
+                </article>
+                <article>
+                  <h2>Recorded jobs</h2>
+                  <Show
+                    when={snapshot().jobs.length > 0}
+                    fallback={<p>No job evidence has been recorded.</p>}
+                  >
+                    <For each={snapshot().jobs}>
+                      {(job) => (
+                        <section class="job" aria-label={`Job ${job.jobId}`}>
+                          <h3>{job.jobId}</h3>
+                          <p>Provider: {job.providerProfile ?? 'not observed'}</p>
+                          <p>Verification: {job.verification}</p>
+                          <p>
+                            Settlement:{' '}
+                            {job.payment._tag === 'refused'
+                              ? `refused (${job.payment.reason}); WDK invoked: ${job.payment.wdkInvoked}`
+                              : 'not recorded'}
+                          </p>
+                          <Show when={job.artifactHash}>{(hash) => <code>{hash()}</code>}</Show>
+                        </section>
+                      )}
+                    </For>
+                  </Show>
+                </article>
+                <article>
+                  <h2>Evidence timeline</h2>
+                  <ol>
+                    <For each={snapshot().events}>
+                      {(event) => (
+                        <li>
+                          <time dateTime={event.recordedAt}>{event.recordedAt}</time> · {event.type}{' '}
+                          · {event.freshness}
+                        </li>
+                      )}
+                    </For>
+                  </ol>
+                  <p>Not observed in this runtime: {snapshot().unobserved.join(', ')}.</p>
+                </article>
+              </section>
+            )}
+          </Show>
+        )}
+      </Show>
+    </main>
+  )
+}
