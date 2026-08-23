@@ -118,13 +118,26 @@ export const decodeLatestVerification = (
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
     const events = yield* Effect.forEach(lines, decodeEvent)
-    const verification = events.findLast(
+    const verifications = events.filter(
       (event): event is Extract<DecodedEvent, { readonly _tag: 'verification' }> =>
         event._tag === 'verification' && event.value.workspace === workspace,
     )
+    const verification = verifications.at(-1)
     if (verification === undefined) {
       return yield* Effect.fail(
         failure('verification-not-found', 'no live verification exists for the workspace'),
+      )
+    }
+    if (
+      verifications.some(
+        (candidate) =>
+          candidate.value.artifactHash !== verification.value.artifactHash ||
+          candidate.value.termsHash !== verification.value.termsHash ||
+          candidate.value.verifierHash !== verification.value.verifierHash,
+      )
+    ) {
+      return yield* Effect.fail(
+        failure('invalid-event-log', 'workspace has conflicting verification bindings'),
       )
     }
     return verification.value
