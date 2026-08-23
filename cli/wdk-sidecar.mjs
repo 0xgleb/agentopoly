@@ -10,12 +10,15 @@ import {
   decodePreviewResult,
   decodeSourceAddressResult,
 } from './wdk-response.ts'
+import { createPreviewRegistry } from './wdk-preview-registry.ts'
 import { decodeWdkSourceConfig, enforcesWdkSourceConfig } from './wdk-source-config.ts'
 
 const moduleRoot = fileURLToPath(new URL('../', import.meta.url))
 const mcpEntrypoint = new URL('../node_modules/@tetherto/wdk-cli/bin/wdk-mcp.mjs', import.meta.url)
 const requestTimeoutMs = 30_000
 const maximumCommandBytes = 65_536
+const previewLifetimeMs = 30_000
+const previews = createPreviewRegistry()
 
 const write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`)
 
@@ -66,8 +69,26 @@ const callWdkMcp = async (command) => {
   if (!enforcesWdkSourceConfig(sourceConfig, command)) {
     throw new Error('WDK source request does not match reviewed local configuration')
   }
-  if (!isPreviewStillValid(command, Date.now())) {
+  const now = Date.now()
+  if (!isPreviewStillValid(command, now)) {
     throw new Error('WDK payment preview has expired')
+  }
+  if (
+    command.type === 'broadcast-reserved-payment' &&
+    !previews.consume(
+      {
+        atomicAmount: command.atomicAmount,
+        destination: command.destination,
+        network: command.network,
+        previewExpiresAt: command.previewExpiresAt,
+        previewHash: command.previewHash,
+        termsHash: command.termsHash,
+        verificationHash: command.verificationHash,
+      },
+      now,
+    )
+  ) {
+    throw new Error('WDK payment preview is unknown or already consumed')
   }
   const child = spawn(process.execPath, [fileURLToPath(mcpEntrypoint)], {
     cwd: moduleRoot,
@@ -122,12 +143,29 @@ const callWdkMcp = async (command) => {
       destination: command.destination,
       network: command.network,
     }
+    const decoded = await Effect.runPromise(
+      command.type === 'preview-payment'
+        ? decodePreviewResult(result, expected)
+        : decodeBroadcastResult(result, expected),
+    )
     return {
-      result: await Effect.runPromise(
+      result:
         command.type === 'preview-payment'
-          ? decodePreviewResult(result, expected)
-          : decodeBroadcastResult(result, expected),
-      ),
+          ? {
+              ...decoded,
+              ...previews.record(
+                {
+                  atomicAmount: command.atomicAmount,
+                  destination: command.destination,
+                  network: command.network,
+                  termsHash: command.termsHash,
+                  verificationHash: command.verificationHash,
+                },
+                decoded.estimatedNativeFee,
+                Date.now() + previewLifetimeMs,
+              ),
+            }
+          : decoded,
       type: command.type,
     }
   } finally {

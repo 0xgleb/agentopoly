@@ -90,7 +90,7 @@ describe('Agentopoly CLI', () => {
 
     expect(exitCode).toBe(1)
     expect(stdout).toBe('')
-    expect(stderr).toContain('Agentopoly command failed with a typed runtime error.')
+    expect(stderr).toContain('verification requires AGENTOPOLY_TERMS_HASH')
   })
 
   test('presents the packaged provider workflow without starting an agent', async () => {

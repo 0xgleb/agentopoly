@@ -44,7 +44,7 @@ describe('live settlement decision events', () => {
         jobId: 'normalize-market-handle-v1',
         paymentStatus: 'refused',
         termsHash: 'c'.repeat(64),
-        type: 'settlement.refusal-recorded'
+        type: 'settlement.refusal-recorded',
         verificationStatus: 'passed',
         workspace,
       },
@@ -159,12 +159,12 @@ describe('live settlement decision events', () => {
       decodeLatestVerification(
         [
           '{',
-          event(),
+          event({}),
           event({
             passed: false,
             workspace: '.tmp/agentopoly-runs/other',
           }),
-          event(),
+          event({}),
         ].join('\n'),
         workspace,
       ),

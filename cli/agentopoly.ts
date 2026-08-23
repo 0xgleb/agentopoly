@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { createHash } from 'node:crypto'
-import { appendFile, copyFile, lstat, mkdir, readFile } from 'node:fs/promises'
+import { appendFile, copyFile, lstat, mkdir, readFile, realpath } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join, relative, resolve } from 'node:path'
 
@@ -220,6 +220,11 @@ const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailur
       catch: () => failure('verification-failed', 'provider did not submit an artifact'),
     })
     const artifactHash = createHash('sha256').update(submission, 'utf8').digest('hex')
+    const eventWorkspace = yield* Effect.tryPromise({
+      try: async () => `.tmp/agentopoly-runs/${relative(await realpath(runsRoot), workspace)}`,
+      catch: () =>
+        failure('verification-failed', 'could not establish the verified workspace identity'),
+    })
     const eventLog = yield* Effect.tryPromise({
       try: async () => {
         try {
@@ -232,9 +237,7 @@ const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailur
       catch: () => failure('verification-failed', 'could not read durable verification evidence'),
     })
     if (eventLog !== undefined) {
-      const existing = yield* Effect.either(
-        decodeLatestVerification(eventLog, relative(repositoryRoot, workspace)),
-      )
+      const existing = yield* Effect.either(decodeLatestVerification(eventLog, eventWorkspace))
       if (existing._tag === 'Right') {
         if (
           existing.right.artifactHash !== artifactHash ||
@@ -334,7 +337,7 @@ const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailur
       termsHash,
       type: 'verification.completed',
       verifierHash,
-      workspace: relative(repositoryRoot, workspace),
+      workspace: eventWorkspace,
     })
     return passed
   })
@@ -347,14 +350,18 @@ const finalizeRun = (workspaceCandidate: string): Effect.Effect<void, CliFailure
       ),
     )
 
+    const eventWorkspace = yield* Effect.tryPromise({
+      try: async () => `.tmp/agentopoly-runs/${relative(await realpath(runsRoot), workspace)}`,
+      catch: () =>
+        failure('runtime-io-failed', 'could not establish the verified workspace identity'),
+    })
     const eventLog = yield* Effect.tryPromise({
       try: () => readFile(eventsPath, 'utf8'),
       catch: () => failure('runtime-io-failed', 'live event log is unavailable'),
     })
-    const verification = yield* decodeLatestVerification(
-      eventLog,
-      relative(repositoryRoot, workspace),
-    ).pipe(Effect.mapError((cause) => failure('verification-failed', cause.reason)))
+    const verification = yield* decodeLatestVerification(eventLog, eventWorkspace).pipe(
+      Effect.mapError((cause) => failure('verification-failed', cause.reason)),
+    )
     yield* Effect.forEach(deriveSettlementEvents(verification), appendEvent, {
       concurrency: 1,
       discard: true,
