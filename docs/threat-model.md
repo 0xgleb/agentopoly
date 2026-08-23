@@ -162,6 +162,7 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 
 - local runtime event-log input is bounded before decoding; malformed, oversized, future, duplicate, and unsupported records produce a bounded refusal or one recorded projection rather than a fabricated economic event;
 - a bounded legacy `receipt.recorded` outer envelope is ignored until a versioned receipt decoder validates it; ignored fields cannot derive payment, settlement, reputation, or raw browser data;
+- a malformed, partial, wrong-scale, conflicting, or unbound versioned `receipt.recorded` cannot project a payment card, reveal a destination or full hash, or authorize a wallet action;
 - malformed, partial, expired, duplicate, or non-`live-peer` `capability.observed` records cannot project a capability, remove the capability-discovery absence marker, derive verification or reputation, or authorize a local action;
 - malformed, duplicate, mismatched, or unvalidated `agreement.observed` records cannot project fixed-price terms, reveal signatures, wallet destinations, or full hashes, or authorize payment;
 - local browser client cannot call WDK directly;

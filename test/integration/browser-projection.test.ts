@@ -206,6 +206,7 @@ describe('browser economy projection', () => {
       ],
       events: [],
       jobs: [],
+      receipts: [],
       terms: [],
       unobserved: ['signed terms', 'arbitration'],
     })
@@ -252,6 +253,42 @@ describe('browser economy projection', () => {
       expect(deduplicated.capabilities).toHaveLength(1)
       expect(deduplicated.unobserved).toContain('signed terms')
       expect(deduplicated.unobserved).not.toContain('capability discovery')
+    }
+  })
+
+  test('projects a complete versioned receipt without destination or hashes', () => {
+    const projection = projectEventLog(
+      eventLog([
+        {
+          artifactHash,
+          atomicAmount: '1500000',
+          attemptId: 'attempt-1',
+          authorizationKey: 'authorization-1',
+          destination: '0xprivate',
+          evidenceSource: 'live-agent-run',
+          jobId: 'normalize-market-handle-v1',
+          network: 'ethereum-sepolia',
+          recordedAt,
+          schemaVersion: 2,
+          termsHash: 'b'.repeat(64),
+          transactionHash: 'c'.repeat(64),
+          type: 'receipt.recorded',
+          verificationHash: 'd'.repeat(64),
+          workspace: '.tmp/agentopoly-runs/run-1',
+        },
+      ]),
+      new Date(recordedAt),
+    )
+
+    expect(projection._tag).toBe('projection')
+    if (projection._tag === 'projection') {
+      expect(projection.receipts).toEqual([
+        {
+          atomicAmount: '1500000',
+          jobId: 'normalize-market-handle-v1',
+          network: 'ethereum-sepolia',
+        },
+      ])
     }
   })
 
@@ -307,6 +344,7 @@ describe('browser economy projection', () => {
       capabilities: [],
       events: [],
       jobs: [],
+      receipts: [],
       terms: [],
       unobserved: ['capability discovery', 'signed terms', 'arbitration'],
     })

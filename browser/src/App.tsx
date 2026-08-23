@@ -59,6 +59,7 @@ const decodeProjection = (value: unknown): BrowserProjectionResult | undefined =
     !Array.isArray(value['capabilities']) ||
     !Array.isArray(value['events']) ||
     !Array.isArray(value['jobs']) ||
+    !Array.isArray(value['receipts']) ||
     !Array.isArray(value['terms']) ||
     !Array.isArray(value['unobserved'])
   ) {
@@ -158,6 +159,21 @@ const decodeProjection = (value: unknown): BrowserProjectionResult | undefined =
     ]
   })
 
+  const receipts: BrowserProjection['receipts'][number][] = value['receipts'].flatMap((receipt) =>
+    isRecord(receipt) &&
+    isBoundedText(receipt['atomicAmount'], 78) &&
+    /^[1-9][0-9]*$/.test(receipt['atomicAmount']) &&
+    isBoundedText(receipt['jobId'], 128) &&
+    isBoundedText(receipt['network'], 128)
+      ? [
+          {
+            atomicAmount: receipt['atomicAmount'],
+            jobId: receipt['jobId'],
+            network: receipt['network'],
+          },
+        ]
+      : [],
+  )
   const terms: BrowserProjection['terms'][number][] = value['terms'].flatMap((term) =>
     isRecord(term) &&
     isBoundedText(term['atomicAmount'], 78) &&
@@ -185,6 +201,7 @@ const decodeProjection = (value: unknown): BrowserProjectionResult | undefined =
     capabilities.length !== value['capabilities'].length ||
     events.length !== value['events'].length ||
     jobs.length !== value['jobs'].length ||
+    receipts.length !== value['receipts'].length ||
     terms.length !== value['terms'].length ||
     (capabilities.length === 0 &&
       (value['unobserved'].length !== 3 ||
@@ -205,6 +222,7 @@ const decodeProjection = (value: unknown): BrowserProjectionResult | undefined =
     capabilities,
     events,
     jobs,
+    receipts,
     terms,
     unobserved:
       capabilities.length === 0
@@ -299,6 +317,24 @@ export const App = () => {
                             </time>
                             <br />
                             {capability.evidenceSummary}
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </Show>
+                </article>
+                <article>
+                  <h2>Recorded payment receipts</h2>
+                  <Show
+                    when={snapshot().receipts.length > 0}
+                    fallback={<p>No complete payment receipt has been observed.</p>}
+                  >
+                    <ul>
+                      <For each={snapshot().receipts}>
+                        {(receipt) => (
+                          <li>
+                            <strong>{receipt.jobId}</strong> · {receipt.atomicAmount} atomic USDt ·{' '}
+                            {receipt.network}
                           </li>
                         )}
                       </For>

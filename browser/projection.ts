@@ -47,7 +47,22 @@ type AgreementObservedEvent = EventBase &
     readonly type: 'agreement.observed'
   }>
 
+type ReceiptRecordedEvent = EventBase &
+  Readonly<{
+    readonly artifactHash: string
+    readonly atomicAmount: string
+    readonly attemptId: string
+    readonly authorizationKey: string
+    readonly destination: string
+    readonly network: string
+    readonly termsHash: string
+    readonly transactionHash: string
+    readonly type: 'receipt.recorded'
+    readonly verificationHash: string
+  }>
+
 type RecordedEvent =
+  | ReceiptRecordedEvent
   | AgreementObservedEvent
   | CapabilityObservedEvent
   | (EventBase &
@@ -116,6 +131,12 @@ export type BrowserEventProjection = Readonly<{
   readonly type: Exclude<RecordedEvent, CapabilityObservedEvent>['type']
 }>
 
+export type BrowserReceiptProjection = Readonly<{
+  readonly atomicAmount: string
+  readonly jobId: string
+  readonly network: string
+}>
+
 export type BrowserTermsProjection = Readonly<{
   readonly atomicAmount: string
   readonly executionDeadline: number
@@ -146,6 +167,7 @@ export type BrowserProjection = Readonly<{
   readonly events: readonly BrowserEventProjection[]
   readonly jobs: readonly BrowserJobProjection[]
   readonly terms: readonly BrowserTermsProjection[]
+  readonly receipts: readonly BrowserReceiptProjection[]
   readonly unobserved: readonly UnobservedSurface[]
 }>
 
@@ -300,6 +322,69 @@ const parseEvent = (
   if (isRecord(value) && value['type'] === 'capability.observed') {
     return parseCapabilityObserved(value, observedAt, index)
   }
+  if (isRecord(value) && value['type'] === 'receipt.recorded' && value['schemaVersion'] === 2) {
+    const fields = [
+      'artifactHash',
+      'atomicAmount',
+      'attemptId',
+      'authorizationKey',
+      'destination',
+      'evidenceSource',
+      'jobId',
+      'network',
+      'recordedAt',
+      'schemaVersion',
+      'termsHash',
+      'transactionHash',
+      'type',
+      'verificationHash',
+      'workspace',
+    ]
+    const recordedAt = value['recordedAt']
+    const timestamp = typeof recordedAt === 'string' ? Date.parse(recordedAt) : NaN
+    if (
+      !hasOnlyFields(value, fields) ||
+      value['evidenceSource'] !== 'live-agent-run' ||
+      !isBoundedString(value['jobId'], 128) ||
+      !isBoundedString(value['workspace'], 1_024) ||
+      typeof recordedAt !== 'string' ||
+      !Number.isFinite(timestamp) ||
+      !isHash(value['artifactHash']) ||
+      typeof value['atomicAmount'] !== 'string' ||
+      !/^[1-9][0-9]{0,77}$/.test(value['atomicAmount']) ||
+      !isBoundedString(value['attemptId'], 256) ||
+      !isBoundedString(value['authorizationKey'], 256) ||
+      !isBoundedString(value['destination'], 256) ||
+      !isBoundedString(value['network'], 128) ||
+      !isHash(value['termsHash']) ||
+      !isHash(value['transactionHash']) ||
+      !isHash(value['verificationHash'])
+    )
+      return refusal('malformed-event-log')
+    if (timestamp - observedAt.getTime() > MAX_FUTURE_SKEW_MILLISECONDS)
+      return refusal('future-event')
+    return {
+      event: {
+        artifactHash: value['artifactHash'],
+        atomicAmount: value['atomicAmount'],
+        attemptId: value['attemptId'],
+        authorizationKey: value['authorizationKey'],
+        destination: value['destination'],
+        freshness:
+          observedAt.getTime() - timestamp > STALE_AFTER_MILLISECONDS ? 'stale' : 'current',
+        jobId: value['jobId'],
+        network: value['network'],
+        recordedAt,
+        termsHash: value['termsHash'],
+        transactionHash: value['transactionHash'],
+        type: 'receipt.recorded',
+        verificationHash: value['verificationHash'],
+        workspace: value['workspace'],
+      },
+      index,
+    }
+  }
+
   if (
     !isRecord(value) ||
     value['schemaVersion'] !== 1 ||
@@ -536,6 +621,7 @@ export const projectEventLog = (text: string, observedAt: Date): BrowserProjecti
   const capabilities = new Map<string, BrowserCapabilityProjection>()
   const capabilityRevisions = new Map<string, CapabilityObservedEvent>()
   const jobs = new Map<string, MutableJobProjection>()
+  const receipts = new Map<string, BrowserReceiptProjection>()
   const terms = new Map<string, BrowserTermsProjection>()
 
   for (const { event } of uniqueEvents) {
@@ -561,6 +647,23 @@ export const projectEventLog = (text: string, observedAt: Date): BrowserProjecti
           revision: event.revision,
         })
       }
+      continue
+    }
+
+    if (event.type === 'receipt.recorded') {
+      const current = receipts.get(event.jobId)
+      const projected = {
+        atomicAmount: event.atomicAmount,
+        jobId: event.jobId,
+        network: event.network,
+      }
+      if (
+        current !== undefined &&
+        (current.atomicAmount !== projected.atomicAmount || current.network !== projected.network)
+      ) {
+        return refusal('malformed-event-log')
+      }
+      receipts.set(event.jobId, projected)
       continue
     }
 
@@ -637,6 +740,7 @@ export const projectEventLog = (text: string, observedAt: Date): BrowserProjecti
     ),
     jobs: [...jobs.values()].sort((left, right) => left.jobId.localeCompare(right.jobId)),
     terms: [...terms.values()].sort((left, right) => left.jobId.localeCompare(right.jobId)),
+    receipts: [...receipts.values()].sort((left, right) => left.jobId.localeCompare(right.jobId)),
     unobserved:
       projectedCapabilities.length === 0
         ? ['capability discovery', 'signed terms', 'arbitration']
