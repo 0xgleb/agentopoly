@@ -34,6 +34,24 @@ export type PaymentDecision =
 const atomic = (value: string): bigint | undefined =>
   /^[1-9][0-9]*$/.test(value) ? BigInt(value) : undefined
 
+export const authorizePreviewedPayment = (
+  input: Readonly<{
+    readonly authorization: PaymentAuthorization
+    readonly estimatedNativeFee: string
+    readonly maximumNativeFee: string
+  }>,
+): PaymentDecision => {
+  const estimatedFee = atomic(input.estimatedNativeFee)
+  const agreedFee = atomic(input.authorization.maximumNativeFee)
+  const policyFee = atomic(input.maximumNativeFee)
+  if (estimatedFee === undefined || agreedFee === undefined || policyFee === undefined) {
+    return { ok: false, reason: 'invalid-amount' }
+  }
+  return estimatedFee <= agreedFee && estimatedFee <= policyFee
+    ? { ok: true, value: input.authorization }
+    : { ok: false, reason: 'fee-limit' }
+}
+
 export const authorizePayment = (
   input: Readonly<{
     readonly agreement: PaymentTuple

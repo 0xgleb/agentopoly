@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { authorizePayment } from '../../cli/payment-policy.ts'
+import { authorizePayment, authorizePreviewedPayment } from '../../cli/payment-policy.ts'
 
 const hashes = {
   artifactHash: 'a'.repeat(64),
@@ -34,6 +34,16 @@ describe('payment policy', () => {
         verification: { ...hashes, passed: true },
       }),
     ).toEqual({ ok: true, value: { ...hashes, ...tuple, maximumNativeFee: '25000' } })
+  })
+
+  test('refuses a previewed fee over the exact payment limits', () => {
+    expect(
+      authorizePreviewedPayment({
+        authorization: { ...hashes, ...tuple, maximumNativeFee: '100' },
+        estimatedNativeFee: '101',
+        maximumNativeFee: '100',
+      }),
+    ).toEqual({ ok: false, reason: 'fee-limit' })
   })
 
   test('refuses a mismatched verification without producing a payment tuple', () => {
