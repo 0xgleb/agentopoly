@@ -166,6 +166,8 @@ Selected shape:
 
 The dashboard is a projection and local command surface. It never becomes the P2P transport, trust authority, or wallet authority.
 
+The development browser surface is a loopback-only Vite server. Its single projection endpoint accepts `GET` only, reads the local runtime event log, and decodes a bounded allowlist of recorded provider, artifact, verification, settlement-refusal, and reputation events before returning a projection. It returns a bounded refusal for malformed, oversized, future, or unsupported input and never forwards raw event-log lines to the browser. The browser has no WDK, transport, signing, policy, or command endpoint. Absent discovery, signed terms, or arbitration evidence stays visibly unobserved rather than being filled with demo data.
+
 ## Open implementation proofs
 
 1. Prove Bare import and bundle compatibility for the reviewed schema decoder used at every untrusted wire and persisted-state boundary; decoder selection is open, but decoding is mandatory.

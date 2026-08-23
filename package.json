@@ -10,15 +10,19 @@
     "format": "prettier --check --ignore-unknown .",
     "format:write": "prettier --write --ignore-unknown .",
     "agentopoly": "bun run cli/agentopoly.ts",
+    "dev": "vite --config browser/vite.config.ts",
     "start": "bun run index.ts",
     "lint": "eslint .",
     "typecheck:runtime": "tsc --noEmit",
     "typecheck:host": "tsc --project cli/tsconfig.json && tsc --project cli/extensions/tsconfig.json",
-    "typecheck": "bun run typecheck:runtime && bun run typecheck:host && tsc --project test/tsconfig.json",
+    "typecheck:browser": "tsc --project browser/tsconfig.json",
+    "typecheck": "bun run typecheck:runtime && bun run typecheck:host && bun run typecheck:browser && tsc --project test/tsconfig.json",
     "test:unit": "bun test --timeout 10000 test/unit",
     "test:integration": "bun test --timeout 30000 test/integration",
     "test": "bun run test:unit && bun run test:integration",
-    "build": "bun build --target=bun --packages=external --root=. --outdir=dist index.ts participant/worker.js cli/agentopoly.ts",
+    "build:runtime": "bun build --target=bun --packages=external --root=. --outdir=dist index.ts participant/worker.js cli/agentopoly.ts",
+    "build:browser": "vite build --config browser/vite.config.ts",
+    "build": "bun run build:runtime && bun run build:browser",
     "check": "bun run format && bun run lint && bun run typecheck && bun run test && bun run build"
   },
   "devDependencies": {
@@ -28,7 +32,9 @@
     "eslint": "^10.9.0",
     "prettier": "^3.9.6",
     "typescript": "5",
-    "typescript-eslint": "^8.67.0"
+    "typescript-eslint": "^8.67.0",
+    "vite": "^8.2.2",
+    "vite-plugin-solid": "^2.11.14"
   },
   "dependencies": {
     "@tetherto/wdk": "^1.0.0-beta.16",
@@ -36,6 +42,7 @@
     "effect": "^3.22.1",
     "hyperswarm": "^4.17.0",
     "oh-my-pi": "0.2.0",
-    "pear-runtime": "^1.3.1"
+    "pear-runtime": "^1.3.1",
+    "solid-js": "^1.9.15"
   }
 }
