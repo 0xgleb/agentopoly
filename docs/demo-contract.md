@@ -105,6 +105,10 @@ The UI must turn a failure into useful evidence:
 - **2:20-2:45:** evidence-backed local reputation changes provider selection;
 - **2:45-3:00:** selected sponsor proof and close.
 
+## Presenter reminder
+
+Raise the required pinned `@tetherto/wdk-cli` dependency graph with the Tether partners. Bun audit currently reports 34 transitive advisories: 13 high, 19 moderate, and 2 low. Bun also blocked the `protobufjs@7.6.5` postinstall. Ask whether a remediated release or official mitigation is planned. Explain that Agentopoly isolates the CLI boundary and does not start WDK or load wallet secrets without complete local authorization witnesses.
+
 ## Submission evidence checklist
 
 - three-minute video with English captions where required;
