@@ -124,6 +124,8 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 - per-job limit boundary allows exactly the cap and refuses cap plus one atomic unit;
 - session cap conserves total authorized spend across concurrent jobs;
 - concurrent duplicate authorization broadcasts at most once;
+- repeated refusal finalization appends each refusal and reputation event at most once, and a concurrent finalizer fails closed while the first decision is recorded;
+- a conflicting prior refusal or reputation record for the same workspace and job fails closed instead of being overwritten or duplicated;
 - a second local caller cannot attach to the private inherited sidecar channel, and a raw tool name or raw transfer argument is rejected before any WDK call;
 - `PaymentPreviewRequest` can invoke only `dryRun=true`, while broadcast requires the matching durable `ReservedPaymentAttempt`;
 - preview token, network, destination, amount, or fee mismatch refuses broadcast;

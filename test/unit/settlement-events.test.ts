@@ -2,7 +2,11 @@ import { describe, expect, test } from 'bun:test'
 
 import * as Effect from 'effect/Effect'
 
-import { decodeLatestVerification, deriveSettlementEvents } from '../../cli/settlement.ts'
+import {
+  decodeLatestVerification,
+  deriveSettlementEvents,
+  selectSettlementEventsToAppend,
+} from '../../cli/settlement.ts'
 
 const workspace = '.tmp/agentopoly-runs/reliable'
 
@@ -178,7 +182,102 @@ describe('live settlement decision events', () => {
     })
   })
 
-  test('fails closed on malformed or missing verification evidence', async () => {
+  test('does not append duplicate refusal or reputation evidence on repeated finalization', async () => {
+    const verification = {
+      artifactHash: 'a'.repeat(64),
+      evidenceHash: 'd'.repeat(64),
+      jobId: 'normalize-market-handle-v1',
+      passed: true,
+      termsHash: 'c'.repeat(64),
+      verifierHash: 'e'.repeat(64),
+      workspace,
+    } as const
+    const recorded = deriveSettlementEvents(verification)
+      .map((event) =>
+        JSON.stringify({
+          ...event,
+          recordedAt: '2026-08-22T23:00:00.000Z',
+          schemaVersion: 1,
+        }),
+      )
+      .join('\n')
+
+    const selected = await Effect.runPromise(
+      selectSettlementEventsToAppend(`${recorded}\n`, verification),
+    )
+
+    expect(selected).toEqual([])
+  })
+
+  test('resumes a partially recorded refusal without repeating completed events', async () => {
+    const verification = {
+      artifactHash: 'a'.repeat(64),
+      evidenceHash: 'd'.repeat(64),
+      jobId: 'normalize-market-handle-v1',
+      passed: true,
+      termsHash: 'c'.repeat(64),
+      verifierHash: 'e'.repeat(64),
+      workspace,
+    } as const
+    const [paymentRefused, refusalRecorded, reputationUpdated] =
+      deriveSettlementEvents(verification)
+    const recorded = `${JSON.stringify({
+      ...paymentRefused,
+      recordedAt: '2026-08-22T23:00:00.000Z',
+      schemaVersion: 1,
+    })}\n`
+
+    const selected = await Effect.runPromise(selectSettlementEventsToAppend(recorded, verification))
+
+    expect(selected).toEqual([refusalRecorded, reputationUpdated])
+  })
+
+  test('fails closed on conflicting refusal evidence for the same workspace and job', async () => {
+    const verification = {
+      artifactHash: 'a'.repeat(64),
+      evidenceHash: 'd'.repeat(64),
+      jobId: 'normalize-market-handle-v1',
+      passed: true,
+      termsHash: 'c'.repeat(64),
+      verifierHash: 'e'.repeat(64),
+      workspace,
+    } as const
+    const conflict = JSON.stringify({
+      artifactHash: 'b'.repeat(64),
+      evidenceSource: 'live-agent-run',
+      jobId: verification.jobId,
+      reason: 'missing-exact-payment-authorization',
+      recordedAt: '2026-08-22T23:00:00.000Z',
+      schemaVersion: 1,
+      termsHash: verification.termsHash,
+      type: 'payment.refused',
+      wdkInvoked: false,
+      workspace,
+    })
+
+    const reputationConflict = JSON.stringify({
+      delta: -1,
+      evidenceSource: 'live-agent-run',
+      jobId: verification.jobId,
+      reason: 'failed-verification',
+      recordedAt: '2026-08-22T23:00:00.000Z',
+      schemaVersion: 1,
+      termsHash: verification.termsHash,
+      type: 'reputation.updated',
+      workspace,
+    })
+    const [paymentResult, reputationResult] = await Promise.all([
+      Effect.runPromiseExit(selectSettlementEventsToAppend(`${conflict}\n`, verification)),
+      Effect.runPromiseExit(
+        selectSettlementEventsToAppend(`${reputationConflict}\n`, verification),
+      ),
+    ])
+
+    expect(paymentResult._tag).toBe('Failure')
+    expect(reputationResult._tag).toBe('Failure')
+  })
+
+  test('fails closed on malformed matching or missing verification evidence', async () => {
     const malformed = await Effect.runPromiseExit(
       decodeLatestVerification(
         `${JSON.stringify({

@@ -177,7 +177,7 @@ describe('browser economy projection', () => {
       agents: [],
       events: [],
       jobs: [],
-      unobserved: ['capability discovery', 'signed terms', 'arbitration'],
+      unobserved: ['capability discovery', 'signed terms'],
     })
   })
 
