@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline'
 import * as Effect from 'effect/Effect'
 
 import { decodeSidecarCommand } from './wdk-sidecar-contract.ts'
+import { decodeSourceAddressResult } from './wdk-response.ts'
 
 const moduleRoot = fileURLToPath(new URL('../', import.meta.url))
 const mcpEntrypoint = new URL('../node_modules/@tetherto/wdk-cli/bin/wdk-mcp.mjs', import.meta.url)
@@ -88,6 +89,12 @@ const callWdkMcp = async (command) => {
             name: 'send_token',
           },
     )
+    if (command.type === 'get-source-address') {
+      return {
+        result: await Effect.runPromise(decodeSourceAddressResult(result)),
+        type: command.type,
+      }
+    }
     return { result, type: command.type }
   } finally {
     child.kill()
