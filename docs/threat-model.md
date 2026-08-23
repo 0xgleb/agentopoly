@@ -143,7 +143,7 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 - crash after broadcast but before receipt persistence never treats a tuple-only history match as attempt identity;
 - an unknown result remains reserved without automatic release or retry;
 - failed or disputed verification cannot mint `PaymentAuthorized`;
-- a missing, malformed, altered, wrong-workspace, or replayed locally signed agreement witness causes zero WDK preview or broadcast calls;
+- a missing, malformed, altered, wrong-workspace, or replayed locally signed agreement witness appends no `agreement.observed` event and causes zero WDK preview or broadcast calls;
 - a witness whose canonical terms hash, destination, network, amount, or native-fee cap differs from the verification or local policy causes zero WDK preview or broadcast calls;
 - receipt is not marked settled from a broadcast hash alone.
 
@@ -161,6 +161,7 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 - local runtime event-log input is bounded before decoding; malformed, oversized, future, duplicate, and unsupported records produce a bounded refusal or one recorded projection rather than a fabricated economic event;
 - a bounded legacy `receipt.recorded` outer envelope is ignored until a versioned receipt decoder validates it; ignored fields cannot derive payment, settlement, reputation, or raw browser data;
 - malformed, partial, expired, duplicate, or non-`live-peer` `capability.observed` records cannot project a capability, remove the capability-discovery absence marker, derive verification or reputation, or authorize a local action;
+- malformed, duplicate, mismatched, or unvalidated `agreement.observed` records cannot project fixed-price terms, reveal signatures, wallet destinations, or full hashes, or authorize payment;
 - local browser client cannot call WDK directly;
 - stale projection is visibly stale and cannot authorize a command;
 - redacted evidence cannot be expanded by a client query;

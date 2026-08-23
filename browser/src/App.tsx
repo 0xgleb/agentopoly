@@ -59,6 +59,7 @@ const decodeProjection = (value: unknown): BrowserProjectionResult | undefined =
     !Array.isArray(value['capabilities']) ||
     !Array.isArray(value['events']) ||
     !Array.isArray(value['jobs']) ||
+    !Array.isArray(value['terms']) ||
     !Array.isArray(value['unobserved'])
   ) {
     return undefined
@@ -157,11 +158,34 @@ const decodeProjection = (value: unknown): BrowserProjectionResult | undefined =
     ]
   })
 
+  const terms: BrowserProjection['terms'][number][] = value['terms'].flatMap((term) =>
+    isRecord(term) &&
+    isBoundedText(term['atomicAmount'], 78) &&
+    /^[1-9][0-9]*$/.test(term['atomicAmount']) &&
+    isValidDateMilliseconds(term['executionDeadline']) &&
+    isBoundedText(term['jobId'], 1_024) &&
+    isBoundedText(term['network'], 128) &&
+    isBoundedText(term['provider'], 256) &&
+    isBoundedText(term['serviceId'], 1_024)
+      ? [
+          {
+            atomicAmount: term['atomicAmount'],
+            executionDeadline: term['executionDeadline'],
+            jobId: term['jobId'],
+            network: term['network'],
+            provider: term['provider'],
+            serviceId: term['serviceId'],
+          },
+        ]
+      : [],
+  )
+
   if (
     agents.length !== value['agents'].length ||
     capabilities.length !== value['capabilities'].length ||
     events.length !== value['events'].length ||
     jobs.length !== value['jobs'].length ||
+    terms.length !== value['terms'].length ||
     (capabilities.length === 0 &&
       (value['unobserved'].length !== 3 ||
         value['unobserved'][0] !== 'capability discovery' ||
@@ -181,6 +205,7 @@ const decodeProjection = (value: unknown): BrowserProjectionResult | undefined =
     capabilities,
     events,
     jobs,
+    terms,
     unobserved:
       capabilities.length === 0
         ? ['capability discovery', 'signed terms', 'arbitration']
@@ -274,6 +299,30 @@ export const App = () => {
                             </time>
                             <br />
                             {capability.evidenceSummary}
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </Show>
+                </article>
+                <article>
+                  <h2>Validated terms</h2>
+                  <Show
+                    when={snapshot().terms.length > 0}
+                    fallback={<p>No validated agreement has been observed.</p>}
+                  >
+                    <ul>
+                      <For each={snapshot().terms}>
+                        {(term) => (
+                          <li>
+                            <strong>{term.jobId}</strong> · {term.provider} · {term.serviceId}
+                            <br />
+                            {term.atomicAmount} atomic USDt · {term.network}
+                            <br />
+                            Deadline{' '}
+                            <time dateTime={new Date(term.executionDeadline).toISOString()}>
+                              {new Date(term.executionDeadline).toISOString()}
+                            </time>
                           </li>
                         )}
                       </For>
