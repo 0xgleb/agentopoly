@@ -91,21 +91,25 @@ export type ArbitrationSettlementIntent = Readonly<{
   readonly disputeHash: DisputeHash
   readonly network: NetworkId
   readonly paymentAuthority: 'arbitration-job-only'
+  readonly requiredReceiptEvidenceSource: 'live-agent-run'
   readonly rulingArtifactHash: EvidenceHash
   readonly rulingOutcome: SignedArbitrationRuling['outcome']
   readonly rulingVerificationHash: EvidenceHash
 }>
 
+export type ArbitrationReceiptEvidenceSource = 'live-agent-run' | 'recorded-fixture'
+
 export type ArbitrationReceiptContext = Readonly<{
   readonly attemptId: ArbitrationAttemptId
   readonly authorizationKey: ArbitrationAuthorizationKey
+  readonly evidenceSource: ArbitrationReceiptEvidenceSource
   readonly recordedAt: string
   readonly workspace: string
 }>
 
 export type ArbitrationReceiptRecordedEvent = PaymentReceipt &
   Readonly<{
-    readonly evidenceSource: 'live-agent-run'
+    readonly evidenceSource: ArbitrationReceiptEvidenceSource
     readonly jobId: JobId
     readonly recordedAt: string
     readonly schemaVersion: 2
@@ -113,13 +117,31 @@ export type ArbitrationReceiptRecordedEvent = PaymentReceipt &
     readonly workspace: string
   }>
 
+export type ArbitrationReceiptAdmission = Readonly<{
+  readonly event: ArbitrationReceiptRecordedEvent
+  readonly outcome: 'accepted' | 'duplicate'
+}>
+
 export type ArbitrationFailure = Readonly<{
-  readonly _tag: 'conflicting-dispute' | 'invalid-dispute' | 'invalid-ruling' | 'stale-dispute'
+  readonly _tag:
+    | 'conflicting-dispute'
+    | 'invalid-dispute'
+    | 'invalid-receipt'
+    | 'invalid-ruling'
+    | 'stale-dispute'
   readonly reason: string
 }>
 export type DisputeStore = Readonly<{
   readonly find: (disputeId: DisputeId) => AdmittedDispute | undefined
   readonly record: (dispute: AdmittedDispute) => void
+}>
+
+export type ArbitrationReceiptStore = Readonly<{
+  readonly find: (
+    jobId: JobId,
+    authorizationKey: ArbitrationAuthorizationKey,
+  ) => ArbitrationReceiptRecordedEvent | undefined
+  readonly record: (event: ArbitrationReceiptRecordedEvent) => void
 }>
 
 const failure = (_tag: ArbitrationFailure['_tag'], reason: string): ArbitrationFailure => ({
@@ -170,6 +192,23 @@ export const createDisputeStore = (): DisputeStore => {
   }
 }
 
+export const createArbitrationReceiptStore = (): ArbitrationReceiptStore => {
+  const receipts = new Map<
+    JobId,
+    Map<ArbitrationAuthorizationKey, ArbitrationReceiptRecordedEvent>
+  >()
+  return {
+    find: (jobId, authorizationKey) => receipts.get(jobId)?.get(authorizationKey),
+    record: (event) => {
+      const byAuthorization =
+        receipts.get(event.jobId) ??
+        new Map<ArbitrationAuthorizationKey, ArbitrationReceiptRecordedEvent>()
+      byAuthorization.set(ArbitrationAuthorizationKey(event.authorizationKey), event)
+      receipts.set(event.jobId, byAuthorization)
+    },
+  }
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -205,6 +244,15 @@ const decodeFailedOriginal = (value: unknown): FailedOriginalVerification | unde
 
 const validRuling = (value: unknown): value is SignedArbitrationRuling =>
   isRecord(value) &&
+  hasOnlyFields(value, [
+    'arbitrationTermsHash',
+    'disputeHash',
+    'issuedAt',
+    'outcome',
+    'rulingArtifactHash',
+    'rulingVerificationHash',
+    'signature',
+  ]) &&
   typeof value['arbitrationTermsHash'] === 'string' &&
   TermsHash.is(value['arbitrationTermsHash']) &&
   typeof value['disputeHash'] === 'string' &&
@@ -222,6 +270,7 @@ const validRuling = (value: unknown): value is SignedArbitrationRuling =>
 
 const validArbitrationVerification = (value: unknown): value is ArbitrationVerification =>
   isRecord(value) &&
+  hasOnlyFields(value, ['_tag', 'artifactHash', 'jobId', 'termsHash', 'verificationHash']) &&
   (value['_tag'] === 'passed-arbitration-verification' ||
     value['_tag'] === 'failed-arbitration-verification') &&
   typeof value['artifactHash'] === 'string' &&
@@ -354,6 +403,7 @@ export const admitArbitrationRuling = (
       disputeHash: ruling.disputeHash,
       network: agreement.terms.network,
       paymentAuthority: 'arbitration-job-only',
+      requiredReceiptEvidenceSource: 'live-agent-run',
       rulingArtifactHash: ruling.rulingArtifactHash,
       rulingOutcome: ruling.outcome,
       rulingVerificationHash: verification.verificationHash,
@@ -392,12 +442,12 @@ export const recordArbitrationReceipt = (
     receipt.authorizationKey !== context.authorizationKey
   ) {
     return Effect.fail(
-      failure('invalid-ruling', 'receipt is not bound to the separate arbitration settlement'),
+      failure('invalid-receipt', 'receipt is not bound to the separate arbitration settlement'),
     )
   }
   return Effect.succeed({
     ...result.value,
-    evidenceSource: 'live-agent-run',
+    evidenceSource: context.evidenceSource,
     jobId: intent.arbitrationJobId,
     recordedAt: context.recordedAt,
     schemaVersion: 2,
@@ -406,27 +456,163 @@ export const recordArbitrationReceipt = (
   })
 }
 
+const decodeArbitrationReceiptEvent = (
+  value: unknown,
+): ArbitrationReceiptRecordedEvent | undefined => {
+  if (
+    !isRecord(value) ||
+    !hasOnlyFields(value, [
+      'artifactHash',
+      'atomicAmount',
+      'attemptId',
+      'authorizationKey',
+      'destination',
+      'evidenceSource',
+      'jobId',
+      'network',
+      'recordedAt',
+      'schemaVersion',
+      'termsHash',
+      'transactionHash',
+      'type',
+      'verificationHash',
+      'workspace',
+    ]) ||
+    typeof value['artifactHash'] !== 'string' ||
+    typeof value['atomicAmount'] !== 'string' ||
+    typeof value['attemptId'] !== 'string' ||
+    !ArbitrationAttemptId.is(value['attemptId']) ||
+    typeof value['authorizationKey'] !== 'string' ||
+    !ArbitrationAuthorizationKey.is(value['authorizationKey']) ||
+    (value['evidenceSource'] !== 'live-agent-run' &&
+      value['evidenceSource'] !== 'recorded-fixture') ||
+    typeof value['jobId'] !== 'string' ||
+    !JobId.is(value['jobId']) ||
+    typeof value['destination'] !== 'string' ||
+    typeof value['network'] !== 'string' ||
+    typeof value['recordedAt'] !== 'string' ||
+    value['schemaVersion'] !== 2 ||
+    typeof value['termsHash'] !== 'string' ||
+    typeof value['transactionHash'] !== 'string' ||
+    value['type'] !== 'receipt.recorded' ||
+    typeof value['verificationHash'] !== 'string' ||
+    typeof value['workspace'] !== 'string'
+  ) {
+    return undefined
+  }
+  const context: ArbitrationReceiptContext = {
+    attemptId: ArbitrationAttemptId(value['attemptId']),
+    authorizationKey: ArbitrationAuthorizationKey(value['authorizationKey']),
+    evidenceSource: value['evidenceSource'],
+    recordedAt: value['recordedAt'],
+    workspace: value['workspace'],
+  }
+  const receipt = createPaymentReceipt({
+    artifactHash: value['artifactHash'],
+    atomicAmount: value['atomicAmount'],
+    attemptId: value['attemptId'],
+    authorizationKey: value['authorizationKey'],
+    destination: value['destination'],
+    network: value['network'],
+    termsHash: value['termsHash'],
+    transactionHash: value['transactionHash'],
+    verificationHash: value['verificationHash'],
+  })
+  if (!receipt.ok || !validReceiptContext(context)) return undefined
+  return {
+    ...receipt.value,
+    evidenceSource: context.evidenceSource,
+    jobId: JobId(value['jobId']),
+    recordedAt: context.recordedAt,
+    schemaVersion: 2,
+    type: 'receipt.recorded',
+    workspace: context.workspace,
+  }
+}
+
+const receiptMatchesIntent = (
+  event: ArbitrationReceiptRecordedEvent,
+  intent: ArbitrationSettlementIntent,
+): boolean =>
+  event.jobId === intent.arbitrationJobId &&
+  event.evidenceSource === intent.requiredReceiptEvidenceSource &&
+  event.termsHash === intent.arbitrationTermsHash &&
+  event.artifactHash === intent.rulingArtifactHash &&
+  event.verificationHash === intent.rulingVerificationHash &&
+  event.atomicAmount === intent.atomicAmount.toString() &&
+  event.destination === intent.destination &&
+  event.network === intent.network
+
+const receiptEventsEqual = (
+  left: ArbitrationReceiptRecordedEvent,
+  right: ArbitrationReceiptRecordedEvent,
+): boolean =>
+  left.artifactHash === right.artifactHash &&
+  left.atomicAmount === right.atomicAmount &&
+  left.attemptId === right.attemptId &&
+  left.authorizationKey === right.authorizationKey &&
+  left.destination === right.destination &&
+  left.evidenceSource === right.evidenceSource &&
+  left.jobId === right.jobId &&
+  left.network === right.network &&
+  left.recordedAt === right.recordedAt &&
+  left.termsHash === right.termsHash &&
+  left.transactionHash === right.transactionHash &&
+  left.verificationHash === right.verificationHash &&
+  left.workspace === right.workspace
+
+export const admitArbitrationReceiptEvent = (
+  intent: ArbitrationSettlementIntent,
+  value: unknown,
+  store: ArbitrationReceiptStore,
+): Effect.Effect<ArbitrationReceiptAdmission, ArbitrationFailure> =>
+  Effect.suspend((): Effect.Effect<ArbitrationReceiptAdmission, ArbitrationFailure> => {
+    const event = decodeArbitrationReceiptEvent(value)
+    if (event === undefined || !receiptMatchesIntent(event, intent)) {
+      return Effect.fail(
+        failure('invalid-receipt', 'receipt event violates the arbitration settlement binding'),
+      )
+    }
+    const authorizationKey = ArbitrationAuthorizationKey(event.authorizationKey)
+    const previous = store.find(event.jobId, authorizationKey)
+    if (previous === undefined) {
+      store.record(event)
+      return Effect.succeed({ event, outcome: 'accepted' })
+    }
+    return receiptEventsEqual(previous, event)
+      ? Effect.succeed({ event: previous, outcome: 'duplicate' })
+      : Effect.fail(
+          failure('invalid-receipt', 'arbitration authorization has conflicting receipt evidence'),
+        )
+  })
+
 export const admitDisputeBundle = (
   bundle: DisputeBundle,
   store: DisputeStore,
   now: number,
-): Effect.Effect<AdmittedDispute, ArbitrationFailure> => {
-  if (!Number.isSafeInteger(now) || now < bundle.submittedAt || now - bundle.submittedAt > 60_000)
-    return Effect.fail(failure('stale-dispute', 'dispute bundle is stale'))
-  const admitted: AdmittedDispute = { ...bundle, paymentAuthority: 'arbitration-job-only' }
-  const previous = store.find(bundle.disputeId)
-  if (previous === undefined) {
-    store.record(admitted)
-    return Effect.succeed(admitted)
-  }
-  return previous.original.jobId === admitted.original.jobId &&
-    previous.original.termsHash === admitted.original.termsHash &&
-    previous.original.artifactHash === admitted.original.artifactHash &&
-    previous.original.verificationHash === admitted.original.verificationHash &&
-    previous.statement === admitted.statement &&
-    previous.submittedAt === admitted.submittedAt
-    ? Effect.succeed(previous)
-    : Effect.fail(
-        failure('conflicting-dispute', 'dispute ID is bound to different original evidence'),
-      )
-}
+): Effect.Effect<AdmittedDispute, ArbitrationFailure> =>
+  Effect.suspend(() => {
+    if (
+      !Number.isSafeInteger(now) ||
+      now < bundle.submittedAt ||
+      now - bundle.submittedAt > 60_000
+    ) {
+      return Effect.fail(failure('stale-dispute', 'dispute bundle is stale'))
+    }
+    const admitted: AdmittedDispute = { ...bundle, paymentAuthority: 'arbitration-job-only' }
+    const previous = store.find(bundle.disputeId)
+    if (previous === undefined) {
+      store.record(admitted)
+      return Effect.succeed(admitted)
+    }
+    return previous.original.jobId === admitted.original.jobId &&
+      previous.original.termsHash === admitted.original.termsHash &&
+      previous.original.artifactHash === admitted.original.artifactHash &&
+      previous.original.verificationHash === admitted.original.verificationHash &&
+      previous.statement === admitted.statement &&
+      previous.submittedAt === admitted.submittedAt
+      ? Effect.succeed(previous)
+      : Effect.fail(
+          failure('conflicting-dispute', 'dispute ID is bound to different original evidence'),
+        )
+  })

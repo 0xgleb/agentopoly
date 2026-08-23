@@ -23,12 +23,17 @@ import {
 import {
   ArbitrationAttemptId,
   ArbitrationAuthorizationKey,
+  DisputeId,
+  DisputeStatement,
+  admitArbitrationReceiptEvent,
   admitArbitrationRuling,
   admitDisputeBundle,
+  createArbitrationReceiptStore,
   createDisputeStore,
   disputeBundle,
   hashDisputeBundle,
   recordArbitrationReceipt,
+  type ArbitrationFailure,
   type ArbitrationVerification,
   type FailedOriginalVerification,
   type SignedArbitrationRuling,
@@ -85,7 +90,11 @@ const arbitrationAgreement = (jobId = 'arbitration-job'): AgreedTerms => {
   )
 }
 
-const admit = (statement = 'artifact violates the fixed acceptance contract', submittedAt = 100) =>
+const admit = (
+  statement = 'artifact violates the fixed acceptance contract',
+  submittedAt = 100,
+  store = createDisputeStore(),
+) =>
   Effect.runSync(
     Effect.flatMap(
       disputeBundle({
@@ -94,9 +103,16 @@ const admit = (statement = 'artifact violates the fixed acceptance contract', su
         statement,
         submittedAt,
       }),
-      (bundle) => admitDisputeBundle(bundle, createDisputeStore(), submittedAt),
+      (bundle) => admitDisputeBundle(bundle, store, submittedAt),
     ),
   )
+
+const refusalOf = <A>(
+  effect: Effect.Effect<A, ArbitrationFailure>,
+): ArbitrationFailure['_tag'] | 'unexpected-success' => {
+  const result = Effect.runSync(Effect.either(effect))
+  return result._tag === 'Left' ? result.left._tag : 'unexpected-success'
+}
 
 const rulingFor = (
   agreement: AgreedTerms,
@@ -123,12 +139,22 @@ const passedVerificationFor = (
 })
 
 describe('paid arbitration dispute boundary', () => {
-  test('binds the failed-original evidence and submission time into one replay hash', () => {
-    const first = admit()
-    const duplicate = Effect.runSync(
-      admitDisputeBundle(first, createDisputeStore(), first.submittedAt),
+  test('defers admission and binds submission time into one replay hash', () => {
+    const store = createDisputeStore()
+    const bundle = Effect.runSync(
+      disputeBundle({
+        disputeId: 'dispute-1',
+        original: failedOriginal,
+        statement: 'artifact violates the fixed acceptance contract',
+        submittedAt: 100,
+      }),
     )
-    expect(duplicate).toMatchObject({ paymentAuthority: 'arbitration-job-only' })
+    const admission = admitDisputeBundle(bundle, store, 100)
+    expect(store.find(bundle.disputeId)).toBeUndefined()
+    const first = Effect.runSync(admission)
+    expect(store.find(bundle.disputeId)).toBe(first)
+    const duplicate = Effect.runSync(admitDisputeBundle(first, store, first.submittedAt))
+    expect(duplicate).toBe(first)
     expect(hashDisputeBundle(first)).not.toBe(hashDisputeBundle(admit(undefined, 101)))
   })
 
@@ -156,6 +182,7 @@ describe('paid arbitration dispute boundary', () => {
         {
           attemptId: ArbitrationAttemptId('arbitration-attempt-1'),
           authorizationKey: ArbitrationAuthorizationKey('arbitration-authorization-1'),
+          evidenceSource: 'live-agent-run',
           recordedAt: '2026-08-23T08:00:00.000Z',
           workspace: 'arbitration-workspace',
         },
@@ -178,6 +205,15 @@ describe('paid arbitration dispute boundary', () => {
       schemaVersion: 2,
       type: 'receipt.recorded',
       workspace: 'arbitration-workspace',
+    })
+    const receipts = createArbitrationReceiptStore()
+    expect(Effect.runSync(admitArbitrationReceiptEvent(intent, event, receipts))).toMatchObject({
+      event,
+      outcome: 'accepted',
+    })
+    expect(Effect.runSync(admitArbitrationReceiptEvent(intent, event, receipts))).toMatchObject({
+      event,
+      outcome: 'duplicate',
     })
   })
 
@@ -253,6 +289,18 @@ describe('paid arbitration dispute boundary', () => {
         ),
       ),
     ).toThrow()
+    const rulingWithUnknown = { ...ruling, unknownField: 'unsigned' }
+    expect(
+      refusalOf(
+        admitArbitrationRuling(dispute, agreement, rulingWithUnknown, passed, 100, verifier),
+      ),
+    ).toBe('invalid-ruling')
+    const verificationWithUnknown = { ...passed, unknownField: 'unsigned' }
+    expect(
+      refusalOf(
+        admitArbitrationRuling(dispute, agreement, ruling, verificationWithUnknown, 100, verifier),
+      ),
+    ).toBe('invalid-ruling')
     expect(() =>
       Effect.runSync(
         admitArbitrationRuling(
@@ -302,6 +350,28 @@ describe('paid arbitration dispute boundary', () => {
     }
   })
 
+  test('refuses a ruling signed for a different dispute', () => {
+    const dispute = admit()
+    const other = admit('a different bounded dispute statement')
+    const agreement = arbitrationAgreement()
+    const ruling = rulingFor(agreement, hashDisputeBundle(other))
+    const verification = passedVerificationFor(agreement, ruling)
+    expect(
+      refusalOf(admitArbitrationRuling(dispute, agreement, ruling, verification, 100, verifier)),
+    ).toBe('invalid-ruling')
+  })
+
+  test('enforces the exact UTF-8 bounds for dispute and receipt identifiers', () => {
+    expect(DisputeId('d'.repeat(256))).toHaveLength(256)
+    expect(() => DisputeId('d'.repeat(257))).toThrow()
+    expect(DisputeStatement('s'.repeat(4_096))).toHaveLength(4_096)
+    expect(() => DisputeStatement('s'.repeat(4_097))).toThrow()
+    expect(ArbitrationAttemptId('a'.repeat(256))).toHaveLength(256)
+    expect(() => ArbitrationAttemptId('a'.repeat(257))).toThrow()
+    expect(ArbitrationAuthorizationKey('k'.repeat(256))).toHaveLength(256)
+    expect(() => ArbitrationAuthorizationKey('k'.repeat(257))).toThrow()
+  })
+
   test('refuses every mismatched arbitration receipt witness before producing a v2 event', () => {
     const dispute = admit()
     const agreement = arbitrationAgreement()
@@ -313,6 +383,7 @@ describe('paid arbitration dispute boundary', () => {
     const context = {
       attemptId: ArbitrationAttemptId('arbitration-attempt-1'),
       authorizationKey: ArbitrationAuthorizationKey('arbitration-authorization-1'),
+      evidenceSource: 'live-agent-run',
       recordedAt: '2026-08-23T08:00:00.000Z',
       workspace: 'arbitration-workspace',
     } as const
@@ -339,15 +410,59 @@ describe('paid arbitration dispute boundary', () => {
     ]
 
     for (const mismatch of mismatches) {
-      expect(() => Effect.runSync(recordArbitrationReceipt(intent, context, mismatch))).toThrow()
+      expect(refusalOf(recordArbitrationReceipt(intent, context, mismatch))).toBe('invalid-receipt')
     }
-    expect(() =>
-      Effect.runSync(
+    expect(
+      refusalOf(
         recordArbitrationReceipt(intent, { ...context, recordedAt: 'not-an-instant' }, receipt),
       ),
-    ).toThrow()
-    expect(() =>
-      Effect.runSync(recordArbitrationReceipt(intent, { ...context, workspace: '' }, receipt)),
-    ).toThrow()
+    ).toBe('invalid-receipt')
+    expect(
+      refusalOf(recordArbitrationReceipt(intent, { ...context, workspace: '' }, receipt)),
+    ).toBe('invalid-receipt')
+    expect(
+      Effect.runSync(
+        recordArbitrationReceipt(intent, { ...context, workspace: 'w'.repeat(1_024) }, receipt),
+      ).workspace,
+    ).toHaveLength(1_024)
+    expect(
+      refusalOf(
+        recordArbitrationReceipt(intent, { ...context, workspace: 'w'.repeat(1_025) }, receipt),
+      ),
+    ).toBe('invalid-receipt')
+
+    const fixtureEvent = Effect.runSync(
+      recordArbitrationReceipt(intent, { ...context, evidenceSource: 'recorded-fixture' }, receipt),
+    )
+    expect(fixtureEvent.evidenceSource).toBe('recorded-fixture')
+    expect(
+      refusalOf(
+        admitArbitrationReceiptEvent(intent, fixtureEvent, createArbitrationReceiptStore()),
+      ),
+    ).toBe('invalid-receipt')
+
+    const liveEvent = Effect.runSync(recordArbitrationReceipt(intent, context, receipt))
+    expect(
+      refusalOf(
+        admitArbitrationReceiptEvent(
+          intent,
+          { ...liveEvent, unknownField: 'unsigned' },
+          createArbitrationReceiptStore(),
+        ),
+      ),
+    ).toBe('invalid-receipt')
+    const receipts = createArbitrationReceiptStore()
+    expect(Effect.runSync(admitArbitrationReceiptEvent(intent, liveEvent, receipts)).outcome).toBe(
+      'accepted',
+    )
+    expect(
+      refusalOf(
+        admitArbitrationReceiptEvent(
+          intent,
+          { ...liveEvent, transactionHash: 'b'.repeat(64) },
+          receipts,
+        ),
+      ),
+    ).toBe('invalid-receipt')
   })
 })
