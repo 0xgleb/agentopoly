@@ -10,6 +10,7 @@ import {
   decodePreviewResult,
   decodeSourceAddressResult,
 } from './wdk-response.ts'
+import { decodeWdkSourceConfig, enforcesWdkSourceConfig } from './wdk-source-config.ts'
 
 const moduleRoot = fileURLToPath(new URL('../', import.meta.url))
 const mcpEntrypoint = new URL('../node_modules/@tetherto/wdk-cli/bin/wdk-mcp.mjs', import.meta.url)
@@ -56,6 +57,15 @@ const request = (child, id, method, params) =>
   })
 
 const callWdkMcp = async (command) => {
+  const sourceConfig = await Effect.runPromise(
+    decodeWdkSourceConfig({
+      sourceAccountIndex: process.env.AGENTOPOLY_WDK_SOURCE_ACCOUNT_INDEX,
+      sourceWallet: process.env.AGENTOPOLY_WDK_SOURCE_WALLET,
+    }),
+  )
+  if (!enforcesWdkSourceConfig(sourceConfig, command)) {
+    throw new Error('WDK source request does not match reviewed local configuration')
+  }
   const child = spawn(process.execPath, [fileURLToPath(mcpEntrypoint)], {
     cwd: moduleRoot,
     stdio: ['pipe', 'pipe', 'ignore'],
