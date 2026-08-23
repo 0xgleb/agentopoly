@@ -39,7 +39,7 @@ describe('live settlement decision events', () => {
         evidenceSource: 'live-agent-run',
         jobId: 'normalize-market-handle-v1',
         paymentStatus: 'refused',
-        type: 'receipt.recorded',
+        type: 'settlement.refusal-recorded',
         verificationStatus: 'passed',
         workspace,
       },
@@ -77,6 +77,11 @@ describe('live settlement decision events', () => {
       type: 'payment.refused',
       wdkInvoked: false,
     })
+    expect(events[1]).toMatchObject({
+      paymentStatus: 'refused',
+      type: 'settlement.refusal-recorded',
+      verificationStatus: 'failed',
+    })
     expect(events[2]).toMatchObject({
       delta: -1,
       reason: 'failed-verification',
@@ -84,9 +89,53 @@ describe('live settlement decision events', () => {
     })
   })
 
-  test('fails closed on malformed or missing verification evidence', async () => {
+  test('selects the latest verification for the requested workspace only', async () => {
+    const event = (overrides: Readonly<Record<string, unknown>>): string =>
+      JSON.stringify({
+        artifactHash: 'c'.repeat(64),
+        evidenceSource: 'live-agent-run',
+        jobId: 'normalize-market-handle-v1',
+        passed: true,
+        recordedAt: '2026-08-22T23:00:00.000Z',
+        schemaVersion: 1,
+        type: 'verification.completed',
+        workspace,
+        ...overrides,
+      })
+    const result = await Effect.runPromise(
+      decodeLatestVerification(
+        [
+          '{',
+          event({ artifactHash: 'd'.repeat(64) }),
+          event({
+            artifactHash: 'e'.repeat(64),
+            passed: false,
+            workspace: '.tmp/agentopoly-runs/other',
+          }),
+          event({ artifactHash: 'f'.repeat(64) }),
+        ].join('\n'),
+        workspace,
+      ),
+    )
+
+    expect(result).toEqual({
+      artifactHash: 'f'.repeat(64),
+      jobId: 'normalize-market-handle-v1',
+      passed: true,
+      workspace,
+    })
+  })
+
+  test('fails closed on malformed matching or missing verification evidence', async () => {
     const malformed = await Effect.runPromiseExit(
-      decodeLatestVerification('{"schemaVersion":1,"type":"verification.completed"}\n', workspace),
+      decodeLatestVerification(
+        `${JSON.stringify({
+          schemaVersion: 1,
+          type: 'verification.completed',
+          workspace,
+        })}\n`,
+        workspace,
+      ),
     )
     const missing = await Effect.runPromiseExit(
       decodeLatestVerification(

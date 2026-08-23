@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { appendFile, lstat, readFile, realpath, writeFile } from 'node:fs/promises'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, relative, resolve } from 'node:path'
 
 import * as Effect from 'effect/Effect'
 
@@ -21,7 +21,10 @@ export const queueFileMutation: FileMutationQueue = async (path, operation) => {
   return result
 }
 
-export type ProviderProfile = 'malicious' | 'reliable'
+export type ProviderProfile = string
+
+export const isProviderProfile = (value: unknown): value is ProviderProfile =>
+  typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,31}$/.test(value)
 
 export type ProviderJob = Readonly<{
   readonly acceptanceContract: string
@@ -95,7 +98,7 @@ const parseManifest = (value: unknown): Effect.Effect<JobManifest, ProviderWorks
   })
 }
 
-const resolveWorkspace = (
+export const resolveProviderWorkspace = (
   repositoryRoot: string,
   candidate: string,
 ): Effect.Effect<string, ProviderWorkspaceFailure> => {
@@ -157,7 +160,7 @@ export const loadProviderJob = (
   workspaceCandidate: string,
 ): Effect.Effect<ProviderJob, ProviderWorkspaceFailure> =>
   Effect.gen(function* () {
-    const workspace = yield* resolveWorkspace(repositoryRoot, workspaceCandidate)
+    const workspace = yield* resolveProviderWorkspace(repositoryRoot, workspaceCandidate)
     const manifestText = yield* readFixtureFile(workspace, 'job.json')
     const starterSource = yield* readFixtureFile(workspace, 'starter.ts')
     const manifestValue = yield* Effect.try({
@@ -183,9 +186,16 @@ export const recordProviderSubmission = (
   source: string,
   queueMutation: FileMutationQueue,
 ): Effect.Effect<ProviderSubmission, ProviderWorkspaceFailure> => {
-  if (source.trim().length === 0 || utf8Length(source) > MAX_SUBMISSION_BYTES) {
+  if (
+    !isProviderProfile(profile) ||
+    source.trim().length === 0 ||
+    utf8Length(source) > MAX_SUBMISSION_BYTES
+  ) {
     return Effect.fail(
-      failure('invalid-submission', 'submission must contain at most 32768 UTF-8 bytes'),
+      failure(
+        'invalid-submission',
+        'provider label must be bounded and submission must contain at most 32768 UTF-8 bytes',
+      ),
     )
   }
 
@@ -205,16 +215,35 @@ export const recordProviderSubmission = (
 
   return Effect.tryPromise({
     try: async () => {
-      let duplicate = false
-      await queueMutation(submissionPath, async () => {
+      const [actualEventsRoot, actualEventsParent] = await Promise.all([
+        realpath(eventsRoot),
+        realpath(dirname(eventsPath)),
+      ])
+      const actualEventsRelation = relative(actualEventsRoot, actualEventsParent)
+      if (actualEventsRelation.startsWith('..') || isAbsolute(actualEventsRelation)) {
+        throw new Error('event log parent escaped .tmp')
+      }
+      try {
+        const eventStat = await lstat(eventsPath)
+        if (eventStat.isSymbolicLink() || !eventStat.isFile()) {
+          throw new Error('event log is not a regular file')
+        }
+      } catch (cause: unknown) {
+        if (!isRecord(cause) || cause['code'] !== 'ENOENT') throw cause
+      }
+
+      const duplicate = await queueMutation(submissionPath, async () => {
         try {
           await writeFile(submissionPath, source, { encoding: 'utf8', flag: 'wx' })
+          return false
         } catch (cause: unknown) {
           const existing = await readFile(submissionPath, 'utf8')
           if (existing !== source) throw cause
-          duplicate = true
+          return true
         }
       })
+
+      if (duplicate) return { artifactHash, duplicate, jobId: job.jobId, profile }
 
       const event = {
         artifactHash,

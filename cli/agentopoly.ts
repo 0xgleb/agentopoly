@@ -1,12 +1,17 @@
 #!/usr/bin/env bun
 
 import { createHash } from 'node:crypto'
-import { appendFile, copyFile, mkdir, readFile } from 'node:fs/promises'
+import { appendFile, copyFile, lstat, mkdir, readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { join, relative, resolve } from 'node:path'
 
 import * as Effect from 'effect/Effect'
 
-import type { ProviderProfile } from './provider-workspace.ts'
+import {
+  isProviderProfile,
+  resolveProviderWorkspace,
+  type ProviderProfile,
+} from './provider-workspace.ts'
 import { decodeLatestVerification, deriveSettlementEvents } from './settlement.ts'
 
 type CliFailure = Readonly<{
@@ -26,6 +31,40 @@ const repositoryRoot = resolve(Bun.env['AGENTOPOLY_REPOSITORY_ROOT'] ?? process.
 const runsRoot = join(repositoryRoot, '.tmp', 'agentopoly-runs')
 const eventsPath = join(repositoryRoot, '.tmp', 'agentopoly-events.jsonl')
 const fixtureRoot = join(repositoryRoot, 'fixtures', 'provider-job')
+const ohMyPiExtension = fileURLToPath(import.meta.resolve('oh-my-pi'))
+
+const childEnvironment = (): Readonly<Record<string, string>> => {
+  const allowed = ['HOME', 'PATH', 'TERM', 'TMPDIR', 'USER', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME']
+  return Object.fromEntries(
+    allowed.flatMap((name) => {
+      const value = Bun.env[name]
+      return value === undefined ? [] : [[name, value]]
+    }),
+  )
+}
+
+type BoundedChild = Readonly<{
+  readonly exited: Promise<number>
+  readonly kill: () => void
+}>
+
+const waitForExit = (child: BoundedChild, timeoutMilliseconds: number): Promise<number> =>
+  new Promise((resolveExit, rejectExit) => {
+    const timeout = setTimeout(() => {
+      child.kill()
+      rejectExit(new Error('child process timed out'))
+    }, timeoutMilliseconds)
+    void child.exited.then(
+      (code) => {
+        clearTimeout(timeout)
+        resolveExit(code)
+      },
+      (cause: unknown) => {
+        clearTimeout(timeout)
+        rejectExit(cause instanceof Error ? cause : new Error('child process failed'))
+      },
+    )
+  })
 
 const appendEvent = (event: Readonly<Record<string, unknown>>): Effect.Effect<void, CliFailure> =>
   Effect.tryPromise({
@@ -37,7 +76,7 @@ const appendEvent = (event: Readonly<Record<string, unknown>>): Effect.Effect<vo
         'utf8',
       )
     },
-    catch: () => failure('runtime-io-failed', 'could not append the bounded demo event'),
+    catch: () => failure('runtime-io-failed', 'could not append the bounded provider event'),
   })
 
 const prepareRun = (profile: ProviderProfile): Effect.Effect<PreparedRun, CliFailure> =>
@@ -45,6 +84,7 @@ const prepareRun = (profile: ProviderProfile): Effect.Effect<PreparedRun, CliFai
     try: async () => {
       const runId = `${Date.now().toString()}-${profile}`
       const workspace = join(runsRoot, runId)
+      await mkdir(runsRoot, { recursive: true })
       await mkdir(workspace, { recursive: false })
       await Promise.all(
         ['acceptance.test.ts', 'job.json', 'starter.ts'].map((name) =>
@@ -60,16 +100,9 @@ const prepareRun = (profile: ProviderProfile): Effect.Effect<PreparedRun, CliFai
     catch: () => failure('runtime-io-failed', 'could not create the disposable provider workspace'),
   })
 
-const providerPrompt: Readonly<Record<ProviderProfile, string>> = {
-  reliable:
-    'Inspect the assigned coding job, implement every acceptance criterion, and submit the complete TypeScript artifact.',
-  malicious:
-    'Inspect the assigned coding job and submit the requested plausible but intentionally boundary-incorrect TypeScript artifact.',
-}
-
 const runProvider = (
   profile: ProviderProfile,
-  mode: 'interactive' | 'print',
+  prompt: string,
 ): Effect.Effect<PreparedRun, CliFailure> =>
   Effect.gen(function* () {
     const run = yield* prepareRun(profile)
@@ -89,7 +122,7 @@ const runProvider = (
       '--no-prompt-templates',
       '--no-context-files',
       '-e',
-      join(repositoryRoot, 'node_modules', 'oh-my-pi', 'dist', 'extension.js'),
+      ohMyPiExtension,
       '-e',
       join(repositoryRoot, 'cli', 'extensions', 'agentopoly.ts'),
       '--agentopoly-profile',
@@ -99,19 +132,21 @@ const runProvider = (
       '--agentopoly-events',
       relative(repositoryRoot, eventsPath),
     ]
-    if (mode === 'print') args.push('-p')
-    args.push(providerPrompt[profile])
+    args.push(prompt)
 
     const exitCode = yield* Effect.tryPromise({
       try: async () => {
         const child = Bun.spawn(['pi', ...args], {
           cwd: repositoryRoot,
-          env: { ...Bun.env, AGENTOPOLY_REPOSITORY_ROOT: repositoryRoot },
+          env: {
+            ...childEnvironment(),
+            AGENTOPOLY_REPOSITORY_ROOT: repositoryRoot,
+          },
           stderr: 'inherit',
           stdin: 'inherit',
           stdout: 'inherit',
         })
-        return child.exited
+        return waitForExit(child, 5 * 60 * 1_000)
       },
       catch: () => failure('provider-failed', 'could not start the Pi provider process'),
     })
@@ -127,16 +162,21 @@ const runProvider = (
 
 const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailure> =>
   Effect.gen(function* () {
-    const workspace = resolve(repositoryRoot, workspaceCandidate)
-    const relation = relative(runsRoot, workspace)
-    if (relation.length === 0 || relation.startsWith('..')) {
-      return yield* Effect.fail(
+    const workspace = yield* resolveProviderWorkspace(repositoryRoot, workspaceCandidate).pipe(
+      Effect.mapError(() =>
         failure('invalid-command', 'verification workspace must be beneath .tmp/agentopoly-runs'),
-      )
-    }
+      ),
+    )
 
     const submission = yield* Effect.tryPromise({
-      try: () => readFile(join(workspace, 'submission.ts'), 'utf8'),
+      try: async () => {
+        const submissionPath = join(workspace, 'submission.ts')
+        const submissionStat = await lstat(submissionPath)
+        if (submissionStat.isSymbolicLink() || !submissionStat.isFile()) {
+          throw new Error('submission is not a regular file')
+        }
+        return readFile(submissionPath, 'utf8')
+      },
       catch: () => failure('verification-failed', 'provider did not submit an artifact'),
     })
     const artifactHash = createHash('sha256').update(submission, 'utf8').digest('hex')
@@ -144,10 +184,12 @@ const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailur
       try: async () => {
         const child = Bun.spawn(['bun', 'test', '--timeout', '10000', 'acceptance.test.ts'], {
           cwd: workspace,
+          env: childEnvironment(),
           stderr: 'inherit',
+          stdin: 'ignore',
           stdout: 'inherit',
         })
-        return child.exited
+        return waitForExit(child, 15_000)
       },
       catch: () => failure('verification-failed', 'fixed verifier process could not start'),
     })
@@ -165,13 +207,11 @@ const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailur
 
 const finalizeRun = (workspaceCandidate: string): Effect.Effect<void, CliFailure> =>
   Effect.gen(function* () {
-    const workspace = resolve(repositoryRoot, workspaceCandidate)
-    const relation = relative(runsRoot, workspace)
-    if (relation.length === 0 || relation.startsWith('..')) {
-      return yield* Effect.fail(
+    const workspace = yield* resolveProviderWorkspace(repositoryRoot, workspaceCandidate).pipe(
+      Effect.mapError(() =>
         failure('invalid-command', 'settlement workspace must be beneath .tmp/agentopoly-runs'),
-      )
-    }
+      ),
+    )
 
     const eventLog = yield* Effect.tryPromise({
       try: () => readFile(eventsPath, 'utf8'),
@@ -196,26 +236,30 @@ const printHelp = (): void => {
   console.log(`Agentopoly — paid work between autonomous Pi agents
 
 Usage:
-  agentopoly provider reliable       Launch the reliable provider interactively
-  agentopoly provider malicious      Launch the malicious/incompetent provider interactively
-  agentopoly demo                    Run both providers, verify, and record safe payment decisions
-  agentopoly verify <workspace>      Run the fixed verifier for one submitted workspace
-  agentopoly finalize <workspace>    Refuse unauthorized payment and record receipt/reputation events
+  agentopoly provider <label> <prompt>  Launch one runtime-configured provider
+  agentopoly verify <workspace>        Run the fixed verifier for one submitted workspace
+  agentopoly finalize <workspace>      Attempt exact settlement or record a typed refusal
 
 Provider sessions load the exact Oh My Pi package plus Agentopoly's project extension. They receive only fixture-scoped inspect and submit tools; no wallet, network, shell, or unrestricted filesystem capability.`)
 }
 
 const main = (args: readonly string[]): Effect.Effect<void, CliFailure> =>
   Effect.gen(function* () {
-    const [command, argument] = args
+    const [command, argument, ...remaining] = args
 
     if (command === undefined || command === 'help' || command === '--help') {
       printHelp()
       return
     }
 
-    if (command === 'provider' && (argument === 'reliable' || argument === 'malicious')) {
-      const run = yield* runProvider(argument, 'interactive')
+    if (command === 'provider' && isProviderProfile(argument)) {
+      const prompt = remaining.join(' ').trim()
+      if (prompt.length === 0 || new TextEncoder().encode(prompt).byteLength > 4_096) {
+        return yield* Effect.fail(
+          failure('invalid-command', 'provider prompt must contain at most 4096 UTF-8 bytes'),
+        )
+      }
+      const run = yield* runProvider(argument, prompt)
       console.log(`Workspace: ${run.relativeWorkspace}`)
       return
     }
@@ -235,31 +279,12 @@ const main = (args: readonly string[]): Effect.Effect<void, CliFailure> =>
       return
     }
 
-    if (command === 'demo') {
-      const reliable = yield* runProvider('reliable', 'print')
-      const reliablePassed = yield* verifyRun(reliable.relativeWorkspace)
-      const malicious = yield* runProvider('malicious', 'print')
-      const maliciousPassed = yield* verifyRun(malicious.relativeWorkspace)
-      if (!reliablePassed || maliciousPassed) {
-        return yield* Effect.fail(
-          failure(
-            'verification-failed',
-            'demo outcomes did not match reliable-pass/malicious-fail',
-          ),
-        )
-      }
-      yield* finalizeRun(reliable.relativeWorkspace)
-      yield* finalizeRun(malicious.relativeWorkspace)
-      console.log(`Reliable workspace: ${reliable.relativeWorkspace}`)
-      console.log(`Malicious workspace: ${malicious.relativeWorkspace}`)
-      return
-    }
-
     return yield* Effect.fail(failure('invalid-command', 'use agentopoly --help'))
   })
 
 const exit = await Effect.runPromiseExit(main(Bun.argv.slice(2)))
 if (exit._tag === 'Failure') {
-  console.error('Agentopoly command failed with a typed runtime error.')
+  const cause = exit.cause
+  console.error(`Agentopoly command failed: ${cause.toString()}`)
   process.exitCode = 1
 }

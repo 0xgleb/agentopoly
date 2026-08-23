@@ -27,7 +27,7 @@ export type SettlementEvent =
       readonly evidenceSource: 'live-agent-run'
       readonly jobId: string
       readonly paymentStatus: 'refused'
-      readonly type: 'receipt.recorded'
+      readonly type: 'settlement.refusal-recorded'
       readonly verificationStatus: 'failed' | 'passed'
       readonly workspace: string
     }>
@@ -52,20 +52,29 @@ const failure = (tag: SettlementFailure['_tag'], reason: string): SettlementFail
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const decodeEvent = (line: string): Effect.Effect<DecodedEvent, SettlementFailure> =>
+const decodeEvent = (
+  line: string,
+  workspace: string,
+): Effect.Effect<DecodedEvent, SettlementFailure> =>
   Effect.gen(function* () {
-    const value = yield* Effect.try({
-      try: (): unknown => JSON.parse(line),
-      catch: () => failure('invalid-event-log', 'event log contains malformed JSON'),
-    })
-    if (!isRecord(value) || value['schemaVersion'] !== 1 || typeof value['type'] !== 'string') {
-      return yield* Effect.fail(
-        failure('invalid-event-log', 'event log contains an invalid event envelope'),
-      )
+    const parsed = yield* Effect.option(
+      Effect.try({
+        try: (): unknown => JSON.parse(line),
+        catch: () => failure('invalid-event-log', 'event log contains malformed JSON'),
+      }),
+    )
+    if (parsed._tag === 'None') return { _tag: 'other' }
+    const value = parsed.value
+    if (
+      !isRecord(value) ||
+      value['type'] !== 'verification.completed' ||
+      value['workspace'] !== workspace
+    ) {
+      return { _tag: 'other' }
     }
-    if (value['type'] !== 'verification.completed') return { _tag: 'other' }
 
     if (
+      value['schemaVersion'] !== 1 ||
       value['evidenceSource'] !== 'live-agent-run' ||
       typeof value['artifactHash'] !== 'string' ||
       !/^[a-f0-9]{64}$/.test(value['artifactHash']) ||
@@ -102,7 +111,7 @@ export const decodeLatestVerification = (
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
-    const events = yield* Effect.forEach(lines, decodeEvent)
+    const events = yield* Effect.forEach(lines, (line) => decodeEvent(line, workspace))
     const verification = events.findLast(
       (event): event is Extract<DecodedEvent, { readonly _tag: 'verification' }> =>
         event._tag === 'verification' && event.value.workspace === workspace,
@@ -134,7 +143,7 @@ export const deriveSettlementEvents = (
       evidenceSource: 'live-agent-run',
       jobId: verification.jobId,
       paymentStatus: 'refused',
-      type: 'receipt.recorded',
+      type: 'settlement.refusal-recorded',
       verificationStatus,
       workspace: verification.workspace,
     },

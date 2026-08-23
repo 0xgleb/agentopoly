@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -9,6 +9,7 @@ import {
   loadProviderJob,
   queueFileMutation,
   recordProviderSubmission,
+  resolveProviderWorkspace,
 } from '../../cli/provider-workspace.ts'
 
 const temporaryRoots: string[] = []
@@ -72,7 +73,7 @@ describe('provider workspace boundary', () => {
       .trim()
       .split('\n')
       .map((line): unknown => JSON.parse(line))
-    expect(events).toHaveLength(2)
+    expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({
       artifactHash: first.artifactHash,
       evidenceSource: 'live-agent-run',
@@ -86,6 +87,18 @@ describe('provider workspace boundary', () => {
   test('rejects workspaces outside the disposable run root', async () => {
     const { root } = await createWorkspace()
     const exit = await Effect.runPromiseExit(loadProviderJob(root, root))
+
+    expect(exit._tag).toBe('Failure')
+  })
+
+  test('rejects a symlinked workspace that escapes the physical run root', async () => {
+    const { root } = await createWorkspace()
+    const outside = join(root, 'outside')
+    const escaped = join(root, '.tmp', 'agentopoly-runs', 'escaped')
+    await mkdir(outside)
+    await symlink(outside, escaped)
+
+    const exit = await Effect.runPromiseExit(resolveProviderWorkspace(root, escaped))
 
     expect(exit._tag).toBe('Failure')
   })

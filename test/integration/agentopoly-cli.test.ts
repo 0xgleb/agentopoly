@@ -6,22 +6,23 @@ const repositoryRoot = resolve(import.meta.dir, '../..')
 
 describe('Agentopoly CLI', () => {
   test('presents the packaged provider workflow without starting an agent', async () => {
-    const process = Bun.spawn(['bun', 'run', 'cli/agentopoly.ts', '--help'], {
+    const child = Bun.spawn(['bun', 'run', 'cli/agentopoly.ts', '--help'], {
       cwd: repositoryRoot,
       stderr: 'pipe',
       stdout: 'pipe',
     })
     const [exitCode, stdout, stderr] = await Promise.all([
-      process.exited,
-      new Response(process.stdout).text(),
-      new Response(process.stderr).text(),
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
     ])
 
     expect(exitCode).toBe(0)
-    expect(stderr).toBe('')
-    expect(stdout).toContain('Agentopoly — paid work between autonomous Pi agents')
-    expect(stdout).toContain('provider reliable')
-    expect(stdout).toContain('provider malicious')
+    expect(stderr).not.toContain('Agentopoly command failed')
+    expect(stdout).toContain('provider <label> <prompt>')
     expect(stdout).toContain('finalize <workspace>')
+    expect(stdout).not.toContain('provider reliable')
+    expect(stdout).not.toContain('provider malicious')
+    expect(stdout).not.toContain('agentopoly demo')
   })
 })
