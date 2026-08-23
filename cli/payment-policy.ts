@@ -34,6 +34,9 @@ export type PaymentDecision =
 const atomic = (value: string): bigint | undefined =>
   /^[1-9][0-9]*$/.test(value) ? BigInt(value) : undefined
 
+const nonnegativeAtomic = (value: string): bigint | undefined =>
+  /^(0|[1-9][0-9]*)$/.test(value) ? BigInt(value) : undefined
+
 export const authorizePreviewedPayment = (
   input: Readonly<{
     readonly authorization: PaymentAuthorization
@@ -41,9 +44,9 @@ export const authorizePreviewedPayment = (
     readonly maximumNativeFee: string
   }>,
 ): PaymentDecision => {
-  const estimatedFee = atomic(input.estimatedNativeFee)
-  const agreedFee = atomic(input.authorization.maximumNativeFee)
-  const policyFee = atomic(input.maximumNativeFee)
+  const estimatedFee = nonnegativeAtomic(input.estimatedNativeFee)
+  const agreedFee = nonnegativeAtomic(input.authorization.maximumNativeFee)
+  const policyFee = nonnegativeAtomic(input.maximumNativeFee)
   if (estimatedFee === undefined || agreedFee === undefined || policyFee === undefined) {
     return { ok: false, reason: 'invalid-amount' }
   }
@@ -65,8 +68,8 @@ export const authorizePayment = (
   const amount = atomic(input.agreement.atomicAmount)
   const amountLimit = atomic(input.policy.maximumAtomicAmount)
   const remaining = atomic(input.policy.remainingAtomicAmount)
-  const fee = atomic(input.agreement.maximumNativeFee)
-  const feeLimit = atomic(input.policy.maximumNativeFee)
+  const fee = nonnegativeAtomic(input.agreement.maximumNativeFee)
+  const feeLimit = nonnegativeAtomic(input.policy.maximumNativeFee)
   if (
     amount === undefined ||
     amountLimit === undefined ||

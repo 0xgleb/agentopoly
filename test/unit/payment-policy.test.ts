@@ -36,6 +36,22 @@ describe('payment policy', () => {
     ).toEqual({ ok: true, value: { ...hashes, ...tuple, maximumNativeFee: '25000' } })
   })
 
+  test('permits a zero native fee without relaxing positive payment amounts', () => {
+    expect(
+      authorizePayment({
+        ...hashes,
+        agreement: { ...tuple, maximumNativeFee: '0' },
+        policy: {
+          maximumAtomicAmount: '1500000',
+          maximumNativeFee: '0',
+          observedSourceAddress: '0xbuyer',
+          remainingAtomicAmount: '1500000',
+        },
+        verification: { ...hashes, passed: true },
+      }),
+    ).toEqual({ ok: true, value: { ...hashes, ...tuple, maximumNativeFee: '0' } })
+  })
+
   test('refuses a previewed fee over the exact payment limits', () => {
     expect(
       authorizePreviewedPayment({
