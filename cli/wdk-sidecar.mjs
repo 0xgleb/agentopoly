@@ -61,20 +61,33 @@ const callWdkMcp = async (command) => {
       clientInfo: { name: 'agentopoly-wdk-sidecar', version: '1' },
       protocolVersion: '2025-11-25',
     })
-    const dryRun = command.type === 'preview-payment'
-    const result = await request(child, 2, 'tools/call', {
-      arguments: {
-        amount: command.atomicAmount,
-        baseUnits: true,
-        dryRun,
-        index: command.sourceAccountIndex,
-        network: command.network,
-        to: command.destination,
-        token: command.token,
-        wallet: command.sourceWallet,
-      },
-      name: 'send_token',
-    })
+    const result = await request(
+      child,
+      2,
+      'tools/call',
+      command.type === 'get-source-address'
+        ? {
+            arguments: {
+              index: command.sourceAccountIndex,
+              network: command.network,
+              wallet: command.sourceWallet,
+            },
+            name: 'get_address',
+          }
+        : {
+            arguments: {
+              amount: command.atomicAmount,
+              baseUnits: true,
+              dryRun: command.type === 'preview-payment',
+              index: command.sourceAccountIndex,
+              network: command.network,
+              to: command.destination,
+              token: command.token,
+              wallet: command.sourceWallet,
+            },
+            name: 'send_token',
+          },
+    )
     return { result, type: command.type }
   } finally {
     child.kill()

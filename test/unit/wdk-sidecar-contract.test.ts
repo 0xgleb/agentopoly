@@ -15,6 +15,19 @@ const expectFailure = async (input: unknown, tag: SidecarFailure['_tag']): Promi
 }
 
 describe('WDK sidecar contract', () => {
+  test('accepts a fixed local source-address lookup without wallet control', async () => {
+    const command = await Effect.runPromise(
+      decodeSidecarCommand({
+        network: 'ethereum-sepolia',
+        sourceAccountIndex: 0,
+        sourceWallet: 'agentopoly-demo',
+        type: 'get-source-address',
+      }),
+    )
+
+    expect(command.type).toBe('get-source-address')
+  })
+
   test('accepts only a fixed exact preview request', async () => {
     const command = await Effect.runPromise(
       decodeSidecarCommand({
@@ -34,7 +47,9 @@ describe('WDK sidecar contract', () => {
     )
 
     expect(command.type).toBe('preview-payment')
-    expect(command.atomicAmount).toBe('1500000')
+    if (command.type === 'preview-payment') {
+      expect(command.atomicAmount).toBe('1500000')
+    }
   })
 
   test('refuses raw tool names, decimal amounts, and incomplete reserved broadcasts', async () => {

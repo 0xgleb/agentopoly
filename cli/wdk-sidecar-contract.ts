@@ -1,5 +1,12 @@
 import * as Effect from 'effect/Effect'
 
+export type SourceAddressRequest = Readonly<{
+  readonly network: string
+  readonly sourceAccountIndex: number
+  readonly sourceWallet: string
+  readonly type: 'get-source-address'
+}>
+
 export type PaymentPreviewRequest = Readonly<{
   readonly artifactHash: string
   readonly asset: 'USDt'
@@ -33,7 +40,7 @@ export type ReservedPaymentAttempt = Readonly<{
   readonly verificationHash: string
 }>
 
-export type SidecarCommand = PaymentPreviewRequest | ReservedPaymentAttempt
+export type SidecarCommand = SourceAddressRequest | PaymentPreviewRequest | ReservedPaymentAttempt
 
 export type SidecarFailure = Readonly<{
   readonly _tag: 'invalid-command' | 'unknown-command'
@@ -103,8 +110,28 @@ export const decodeSidecarCommand = (
   input: unknown,
 ): Effect.Effect<SidecarCommand, SidecarFailure> => {
   if (!isRecord(input)) return Effect.fail(failure('invalid-command', 'command must be an object'))
-  if (input['type'] !== 'preview-payment' && input['type'] !== 'broadcast-reserved-payment') {
+  if (
+    input['type'] !== 'get-source-address' &&
+    input['type'] !== 'preview-payment' &&
+    input['type'] !== 'broadcast-reserved-payment'
+  ) {
     return Effect.fail(failure('unknown-command', 'sidecar command type is not allowed'))
+  }
+  if (input['type'] === 'get-source-address') {
+    if (
+      !only(input, ['network', 'sourceAccountIndex', 'sourceWallet', 'type']) ||
+      !identifier(input['network']) ||
+      !nonnegativeSafeInteger(input['sourceAccountIndex']) ||
+      !identifier(input['sourceWallet'])
+    ) {
+      return Effect.fail(failure('invalid-command', 'source address request is invalid'))
+    }
+    return Effect.succeed({
+      network: input['network'],
+      sourceAccountIndex: input['sourceAccountIndex'],
+      sourceWallet: input['sourceWallet'],
+      type: 'get-source-address',
+    })
   }
   const fields =
     input['type'] === 'preview-payment'
