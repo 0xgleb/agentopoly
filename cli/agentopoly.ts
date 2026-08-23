@@ -8,6 +8,7 @@ import * as Effect from 'effect/Effect'
 
 import type { ProviderProfile } from './provider-workspace.ts'
 import { decodeLatestVerification, deriveSettlementEvents } from './settlement.ts'
+import { redactBoundedVerifierEvidence } from './verification-evidence.ts'
 
 type CliFailure = Readonly<{
   readonly _tag: 'invalid-command' | 'provider-failed' | 'runtime-io-failed' | 'verification-failed'
@@ -26,6 +27,30 @@ const repositoryRoot = resolve(Bun.env['AGENTOPOLY_REPOSITORY_ROOT'] ?? process.
 const runsRoot = join(repositoryRoot, '.tmp', 'agentopoly-runs')
 const eventsPath = join(repositoryRoot, '.tmp', 'agentopoly-events.jsonl')
 const fixtureRoot = join(repositoryRoot, 'fixtures', 'provider-job')
+const verificationTimeoutMs = 10_000
+const maximumCapturedBytes = 16_384
+
+const collectBoundedOutput = async (stream: ReadableStream<Uint8Array>): Promise<string> => {
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let retained = 0
+  let next = await reader.read()
+  while (!next.done) {
+    if (retained < maximumCapturedBytes) {
+      const chunk = next.value.slice(0, maximumCapturedBytes - retained)
+      chunks.push(chunk)
+      retained += chunk.length
+    }
+    next = await reader.read()
+  }
+  const output = new Uint8Array(retained)
+  let offset = 0
+  for (const chunk of chunks) {
+    output.set(chunk, offset)
+    offset += chunk.length
+  }
+  return new TextDecoder().decode(output)
+}
 
 const appendEvent = (event: Readonly<Record<string, unknown>>): Effect.Effect<void, CliFailure> =>
   Effect.tryPromise({
@@ -158,20 +183,61 @@ const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailur
       catch: () => failure('verification-failed', 'fixed verifier contract is unavailable'),
     })
     const verifierHash = createHash('sha256').update(verifierSource, 'utf8').digest('hex')
-    const exitCode = yield* Effect.tryPromise({
+    const verifierResult = yield* Effect.tryPromise({
       try: async () => {
-        const child = Bun.spawn(['bun', 'test', '--timeout', '10000', 'acceptance.test.ts'], {
-          cwd: workspace,
-          stderr: 'inherit',
-          stdout: 'inherit',
-        })
-        return child.exited
+        const child = Bun.spawn(
+          ['bun', 'test', '--timeout', verificationTimeoutMs.toString(), 'acceptance.test.ts'],
+          { cwd: workspace, stderr: 'pipe', stdout: 'pipe' },
+        )
+        let timedOut = false
+        const timeout = setTimeout(() => {
+          timedOut = true
+          child.kill()
+        }, verificationTimeoutMs)
+        const [exitCode, stdout, stderr] = await Promise.all([
+          child.exited,
+          collectBoundedOutput(child.stdout),
+          collectBoundedOutput(child.stderr),
+        ])
+        clearTimeout(timeout)
+        return { exitCode, stderr, stdout, timedOut }
       },
       catch: () => failure('verification-failed', 'fixed verifier process could not start'),
     })
-    const passed = exitCode === 0
+    if (verifierResult.timedOut) {
+      return yield* Effect.fail(
+        failure('verification-failed', 'fixed verifier exceeded its bounded execution time'),
+      )
+    }
+    const verifiedSubmission = yield* Effect.tryPromise({
+      try: () => readFile(join(workspace, 'submission.ts'), 'utf8'),
+      catch: () =>
+        failure('verification-failed', 'provider artifact disappeared during verification'),
+    })
+    const verifiedArtifactHash = createHash('sha256')
+      .update(verifiedSubmission, 'utf8')
+      .digest('hex')
+    if (verifiedArtifactHash !== artifactHash) {
+      return yield* Effect.fail(
+        failure('verification-failed', 'provider artifact changed during verification'),
+      )
+    }
+    const passed = verifierResult.exitCode === 0
+    const evidence = redactBoundedVerifierEvidence(
+      `${verifierResult.stdout}\n${verifierResult.stderr}`,
+      workspace,
+    )
     const evidenceHash = createHash('sha256')
-      .update(JSON.stringify({ artifactHash, exitCode, termsHash, verifierHash }), 'utf8')
+      .update(
+        JSON.stringify({
+          artifactHash,
+          evidence,
+          exitCode: verifierResult.exitCode,
+          termsHash,
+          verifierHash,
+        }),
+        'utf8',
+      )
       .digest('hex')
     yield* appendEvent({
       artifactHash,
