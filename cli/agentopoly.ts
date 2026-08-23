@@ -19,7 +19,12 @@ import {
 } from './agreement-witness.ts'
 import { decodeFinalizePolicy } from './finalize-policy.ts'
 import { authorizePayment } from './payment-policy.ts'
-import { decodeLatestVerification, selectSettlementEventsToAppend } from './settlement.ts'
+import {
+  decodeLatestVerification,
+  deriveAgreementObservedEvent,
+  selectAgreementObservationToAppend,
+  selectSettlementEventsToAppend,
+} from './settlement.ts'
 import { redactBoundedVerifierEvidence } from './verification-evidence.ts'
 
 type CliFailure = Readonly<{
@@ -467,6 +472,14 @@ const finalizeRun = (workspaceCandidate: string): Effect.Effect<void, CliFailure
                 termsHash: verification.termsHash,
                 verificationHash: verification.evidenceHash,
               }).pipe(Effect.mapError((cause) => failure('verification-failed', cause.reason)))
+              const agreementEvents = yield* selectAgreementObservationToAppend(
+                eventLog,
+                deriveAgreementObservedEvent(witness),
+              ).pipe(Effect.mapError((cause) => failure('verification-failed', cause.reason)))
+              yield* Effect.forEach(agreementEvents, appendEvent, {
+                concurrency: 1,
+                discard: true,
+              })
               const policy = yield* decodeFinalizePolicy(
                 Bun.env['AGENTOPOLY_FINALIZE_POLICY'],
               ).pipe(Effect.mapError((cause) => failure('verification-failed', cause.reason)))

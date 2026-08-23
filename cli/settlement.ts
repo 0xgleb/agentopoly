@@ -1,6 +1,8 @@
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 
+import type { SignedAgreementWitness } from './agreement-witness.ts'
+
 export type SettlementFailure = Readonly<{
   readonly _tag: 'invalid-event-log' | 'verification-not-found'
   readonly reason: string
@@ -13,6 +15,19 @@ export type VerificationObservation = Readonly<{
   readonly passed: boolean
   readonly termsHash: string
   readonly verifierHash: string
+  readonly workspace: string
+}>
+
+export type AgreementObservedEvent = Readonly<{
+  readonly atomicAmount: string
+  readonly evidenceSource: 'live-agent-run'
+  readonly executionDeadline: number
+  readonly jobId: string
+  readonly network: string
+  readonly provider: string
+  readonly serviceId: string
+  readonly termsHash: string
+  readonly type: 'agreement.observed'
   readonly workspace: string
 }>
 
@@ -192,6 +207,60 @@ export const decodeLatestVerification = (
       )
     }
     return verification.value
+  })
+
+export const deriveAgreementObservedEvent = (
+  witness: SignedAgreementWitness,
+): AgreementObservedEvent => ({
+  atomicAmount: witness.payment.atomicAmount,
+  evidenceSource: 'live-agent-run',
+  executionDeadline: witness.terms.executionDeadline,
+  jobId: witness.terms.jobId,
+  network: witness.payment.network,
+  provider: witness.terms.provider,
+  serviceId: witness.terms.serviceId,
+  termsHash: witness.termsHash,
+  type: 'agreement.observed',
+  workspace: witness.workspace,
+})
+
+export const selectAgreementObservationToAppend = (
+  text: string,
+  event: AgreementObservedEvent,
+): Effect.Effect<readonly AgreementObservedEvent[], SettlementFailure> =>
+  Effect.gen(function* () {
+    const lines = text.split('\n').filter((line) => line.trim().length > 0)
+    const records = yield* Effect.forEach(lines, (line) =>
+      Effect.try({
+        try: (): unknown => JSON.parse(line),
+        catch: () => failure('invalid-event-log', 'event log contains malformed JSON'),
+      }),
+    )
+    const matching = records.filter(
+      (value): value is Record<string, unknown> =>
+        isRecord(value) &&
+        value['type'] === 'agreement.observed' &&
+        value['workspace'] === event.workspace &&
+        value['jobId'] === event.jobId,
+    )
+    if (matching.length === 0) return [event]
+    const exists = matching.every(
+      (value) =>
+        value['schemaVersion'] === 1 &&
+        value['evidenceSource'] === 'live-agent-run' &&
+        value['atomicAmount'] === event.atomicAmount &&
+        value['executionDeadline'] === event.executionDeadline &&
+        value['network'] === event.network &&
+        value['provider'] === event.provider &&
+        value['serviceId'] === event.serviceId &&
+        value['termsHash'] === event.termsHash,
+    )
+    if (!exists) {
+      return yield* Effect.fail(
+        failure('invalid-event-log', 'agreement observation conflicts with the validated witness'),
+      )
+    }
+    return []
   })
 
 export const deriveSettlementEvents = (

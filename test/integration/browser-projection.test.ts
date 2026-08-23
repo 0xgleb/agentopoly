@@ -152,6 +152,39 @@ describe('browser economy projection', () => {
     }
   })
 
+  test('projects validated fixed-price terms without exposing witness secrets or authority', () => {
+    const projection = projectEventLog(
+      eventLog([
+        liveEvent('agreement.observed', {
+          atomicAmount: '1250000',
+          executionDeadline: 1_787_400_800_000,
+          jobId: 'normalize-market-handle-v1',
+          network: 'ethereum-sepolia',
+          provider: 'provider-alpha',
+          serviceId: 'normalize-market-handle',
+          termsHash: 'd'.repeat(64),
+          workspace: '.tmp/agentopoly-runs/run-1',
+        }),
+      ]),
+      new Date(recordedAt),
+    )
+
+    expect(projection._tag).toBe('projection')
+    if (projection._tag === 'projection') {
+      expect(projection.terms).toEqual([
+        {
+          atomicAmount: '1250000',
+          executionDeadline: 1_787_400_800_000,
+          jobId: 'normalize-market-handle-v1',
+          network: 'ethereum-sepolia',
+          provider: 'provider-alpha',
+          serviceId: 'normalize-market-handle',
+        },
+      ])
+      expect(projection.jobs).toEqual([])
+    }
+  })
+
   test('projects a bounded locally admitted capability without creating a job or authority', () => {
     const projection = projectEventLog(eventLog([capabilityObserved()]), new Date(recordedAt))
 
@@ -173,6 +206,7 @@ describe('browser economy projection', () => {
       ],
       events: [],
       jobs: [],
+      terms: [],
       unobserved: ['signed terms', 'arbitration'],
     })
   })
@@ -273,7 +307,8 @@ describe('browser economy projection', () => {
       capabilities: [],
       events: [],
       jobs: [],
-      unobserved: ['capability discovery', 'signed terms'],
+      terms: [],
+      unobserved: ['capability discovery', 'signed terms', 'arbitration'],
     })
   })
 

@@ -2,15 +2,85 @@ import { describe, expect, test } from 'bun:test'
 
 import * as Effect from 'effect/Effect'
 
+import type { SignedAgreementWitness } from '../../cli/agreement-witness.ts'
 import {
   decodeLatestVerification,
+  deriveAgreementObservedEvent,
   deriveSettlementEvents,
+  selectAgreementObservationToAppend,
   selectSettlementEventsToAppend,
 } from '../../cli/settlement.ts'
 
 const workspace = '.tmp/agentopoly-runs/reliable'
 
+const signedWitness = {
+  buyerSignature: 'Ynl0ZXM=',
+  operatorKeyId: 'operator-key-1',
+  payment: {
+    asset: 'USDt',
+    atomicAmount: '1250000',
+    destination: 'private-destination',
+    maximumNativeFee: '1000',
+    network: 'ethereum-sepolia',
+    token: 'usdt',
+  },
+  providerSignature: 'Ynl0ZXM=',
+  terms: {
+    acceptanceContractHash: 'a'.repeat(64),
+    artifactContractHash: 'b'.repeat(64),
+    asset: 'USDt',
+    bidExpiry: 1_787_314_400_000,
+    buyer: 'buyer-alpha',
+    buyerWallet: 'private-buyer-wallet',
+    decimals: 6,
+    destination: 'private-destination',
+    executionDeadline: 1_787_400_800_000,
+    jobId: 'normalize-market-handle-v1',
+    maximumNativeFee: '1000',
+    network: 'ethereum-sepolia',
+    price: '1250000',
+    provider: 'provider-alpha',
+    serviceId: 'normalize-market-handle',
+    taskInputHash: 'c'.repeat(64),
+    tokenContract: 'usdt-contract',
+  },
+  termsHash: 'd'.repeat(64),
+  workspace,
+} satisfies SignedAgreementWitness
+
 describe('live settlement decision events', () => {
+  test('derives a bounded agreement observation without destination, signatures, or full hash output', () => {
+    expect(deriveAgreementObservedEvent(signedWitness)).toEqual({
+      atomicAmount: '1250000',
+      evidenceSource: 'live-agent-run',
+      executionDeadline: 1_787_400_800_000,
+      jobId: 'normalize-market-handle-v1',
+      network: 'ethereum-sepolia',
+      provider: 'provider-alpha',
+      serviceId: 'normalize-market-handle',
+      termsHash: 'd'.repeat(64),
+      type: 'agreement.observed',
+      workspace,
+    })
+  })
+  test('appends one agreement observation and refuses a conflicting replay', async () => {
+    const event = deriveAgreementObservedEvent(signedWitness)
+    const first = await Effect.runPromise(selectAgreementObservationToAppend('', event))
+    const recorded = `${JSON.stringify({
+      ...event,
+      recordedAt: '2026-08-22T23:00:00.000Z',
+      schemaVersion: 1,
+    })}\n`
+    const repeated = await Effect.runPromise(selectAgreementObservationToAppend(recorded, event))
+    const conflict = await Effect.runPromiseExit(
+      selectAgreementObservationToAppend(recorded.replace('1250000', '1250001'), event),
+    )
+
+    expect(first).toEqual([event])
+    expect(repeated).toEqual([])
+    expect(conflict._tag).toBe('Failure')
+  })
+
   test('refuses WDK payment without exact authorization while preserving positive service evidence', async () => {
     const verification = await Effect.runPromise(
       decodeLatestVerification(

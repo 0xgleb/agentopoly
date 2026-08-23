@@ -36,7 +36,19 @@ type CapabilityObservedEvent = Readonly<{
   readonly withdrawal: boolean
 }>
 
+type AgreementObservedEvent = EventBase &
+  Readonly<{
+    readonly atomicAmount: string
+    readonly executionDeadline: number
+    readonly network: string
+    readonly provider: string
+    readonly serviceId: string
+    readonly termsHash: string
+    readonly type: 'agreement.observed'
+  }>
+
 type RecordedEvent =
+  | AgreementObservedEvent
   | CapabilityObservedEvent
   | (EventBase &
       Readonly<{
@@ -104,6 +116,15 @@ export type BrowserEventProjection = Readonly<{
   readonly type: Exclude<RecordedEvent, CapabilityObservedEvent>['type']
 }>
 
+export type BrowserTermsProjection = Readonly<{
+  readonly atomicAmount: string
+  readonly executionDeadline: number
+  readonly jobId: string
+  readonly network: string
+  readonly provider: string
+  readonly serviceId: string
+}>
+
 export type BrowserCapabilityProjection = Readonly<{
   readonly capabilityId: string
   readonly evidenceSummary: string
@@ -124,6 +145,7 @@ export type BrowserProjection = Readonly<{
   readonly capabilities: readonly BrowserCapabilityProjection[]
   readonly events: readonly BrowserEventProjection[]
   readonly jobs: readonly BrowserJobProjection[]
+  readonly terms: readonly BrowserTermsProjection[]
   readonly unobserved: readonly UnobservedSurface[]
 }>
 
@@ -312,6 +334,46 @@ const parseEvent = (
   switch (value['type']) {
     case 'receipt.recorded':
       return { _tag: 'ignored-legacy-receipt' }
+    case 'agreement.observed': {
+      const atomicAmount = value['atomicAmount']
+      const executionDeadline = value['executionDeadline']
+      if (
+        !hasOnlyFields(value, [
+          ...commonFields,
+          'atomicAmount',
+          'executionDeadline',
+          'network',
+          'provider',
+          'serviceId',
+          'termsHash',
+        ]) ||
+        typeof atomicAmount !== 'string' ||
+        !/^[1-9][0-9]{0,77}$/.test(atomicAmount) ||
+        typeof executionDeadline !== 'number' ||
+        !Number.isSafeInteger(executionDeadline) ||
+        executionDeadline < 0 ||
+        executionDeadline > MAX_JAVASCRIPT_DATE_MILLISECONDS ||
+        !isBoundedString(value['network'], 128) ||
+        !isBoundedString(value['provider'], 256) ||
+        !isBoundedString(value['serviceId'], 1_024) ||
+        !isHash(value['termsHash'])
+      ) {
+        return refusal('malformed-event-log')
+      }
+      return {
+        event: {
+          ...base,
+          atomicAmount,
+          executionDeadline,
+          network: value['network'],
+          provider: value['provider'],
+          serviceId: value['serviceId'],
+          termsHash: value['termsHash'],
+          type: 'agreement.observed',
+        },
+        index,
+      }
+    }
     case 'provider.started':
       if (!hasOnlyFields(value, [...commonFields, 'profile']) || !isProfile(value['profile'])) {
         return refusal('malformed-event-log')
@@ -474,6 +536,7 @@ export const projectEventLog = (text: string, observedAt: Date): BrowserProjecti
   const capabilities = new Map<string, BrowserCapabilityProjection>()
   const capabilityRevisions = new Map<string, CapabilityObservedEvent>()
   const jobs = new Map<string, MutableJobProjection>()
+  const terms = new Map<string, BrowserTermsProjection>()
 
   for (const { event } of uniqueEvents) {
     if (event.type === 'capability.observed') {
@@ -498,6 +561,18 @@ export const projectEventLog = (text: string, observedAt: Date): BrowserProjecti
           revision: event.revision,
         })
       }
+      continue
+    }
+
+    if (event.type === 'agreement.observed') {
+      terms.set(event.jobId, {
+        atomicAmount: event.atomicAmount,
+        executionDeadline: event.executionDeadline,
+        jobId: event.jobId,
+        network: event.network,
+        provider: event.provider,
+        serviceId: event.serviceId,
+      })
       continue
     }
 
@@ -561,6 +636,7 @@ export const projectEventLog = (text: string, observedAt: Date): BrowserProjecti
           ],
     ),
     jobs: [...jobs.values()].sort((left, right) => left.jobId.localeCompare(right.jobId)),
+    terms: [...terms.values()].sort((left, right) => left.jobId.localeCompare(right.jobId)),
     unobserved:
       projectedCapabilities.length === 0
         ? ['capability discovery', 'signed terms', 'arbitration']
