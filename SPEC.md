@@ -141,7 +141,13 @@ flowchart LR
 
 The first adapter operates only on a bounded repository-owned deterministic coding fixture. It runs in an isolated disposable workspace, receives no wallet capability, and cannot access unrelated operator files. Model output is data until validated and applied inside that workspace.
 
-Agent harnesses and QVAC may become adapters later. They are not protocol requirements.
+The required provider adapter is a packaged Agentopoly CLI built on Pi and the exact reviewed Oh My Pi package. It loads an Agentopoly project extension that removes general host mutation and wallet tools, exposes only fixture-scoped inspect and submit capabilities, and emits bounded typed job events for the browser dashboard. Provider identity labels and task prompts are bounded runtime inputs; production code contains no hard-coded reliable, malicious, or demo agents. The recorded demo injects distinct reliable-provider and malicious-or-incompetent prompts into separate real Pi sessions. Both perform real work in their own disposable fixture workspace; the second prompt produces an artifact that genuinely violates a named acceptance criterion. A buyer verifies the resulting artifacts through the local reviewed command contract before any payment decision.
+
+Prompt profiles, recorded fixtures, and test projections are labeled by provenance. A test or simulation can prove the state contract but cannot be presented as live provider execution, verification, WDK activity, payment, or settlement.
+
+The first live coding fixture requires `normalizeMarketHandle(input)` to trim surrounding whitespace, lowercase ASCII letters, reject empty input, reject a normalized handle longer than 16 UTF-8 bytes, and reject characters outside lowercase ASCII letters, digits, and hyphen. Its fixed verifier checks valid normalization, invalid characters, the exact 16-byte boundary, and multi-byte overflow. The reliable provider must pass it. The malicious/incompetent profile intentionally uses JavaScript string length instead of UTF-8 byte length so the multi-byte test fails for the named reason.
+
+QVAC may become a provider adapter later. It is not a protocol requirement.
 
 ## Verification and evidence
 
@@ -184,6 +190,8 @@ Immediately before an external broadcast, durable state changes the authorizatio
 The in-flight call has only two post-invocation outcomes. A fully decoded success response containing a transaction hash is the sole attempt-correlated witness and records `broadcast(attemptId, transactionHash)` before producing a receipt. A timeout, transport failure, explicit or partial error, malformed response, missing transaction hash, or crash is `unknown` and records `reconciliation-pending(attemptId)`. WDK history may identify candidate transfers, but a match on source, destination, network, token, amount, or time window cannot bind a transaction to the attempt or prove absence. History cannot manufacture the missing witness. Without a future reviewed recovery protocol, the reservation remains blocked and is never released or retried automatically.
 
 A payment receipt binds the job, authorization key, attempt ID, terms hash, verification hash, transaction hash, source and destination, atomic amount, asset and token contract, network, estimated and observed native fee, policy revision, broadcast time, and observed settlement state. Receipt creation never upgrades an unconfirmed observation to final settlement.
+
+The runnable provider harness must safely refuse settlement unless a passed live verification and every exact payment witness above are present. That refusal invokes no WDK process and emits typed `payment.refused`, `settlement.refusal-recorded`, and `reputation.updated` events; `receipt.recorded` remains reserved for a real payment receipt containing the fields above. A verified delivery may add positive local service evidence while its payment remains explicitly refused; failed verification adds negative local service evidence and cannot authorize provider payment. The shared append-only demo log selects the latest strict live verification for the requested workspace; malformed or unsupported unrelated records cannot block that workspace, while a matching verification that violates the live-evidence contract fails closed. These are live local decisions, not simulated broadcasts or settlement receipts.
 
 ## Disputes and arbitration
 

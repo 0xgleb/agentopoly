@@ -3,17 +3,22 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "bin": {
+    "agentopoly": "./cli/agentopoly.ts"
+  },
   "scripts": {
     "format": "prettier --check --ignore-unknown .",
     "format:write": "prettier --write --ignore-unknown .",
+    "agentopoly": "bun run cli/agentopoly.ts",
     "start": "bun run index.ts",
     "lint": "eslint .",
     "typecheck:runtime": "tsc --noEmit",
-    "typecheck": "bun run typecheck:runtime && tsc --project test/tsconfig.json",
+    "typecheck:host": "tsc --project cli/tsconfig.json && tsc --project cli/extensions/tsconfig.json",
+    "typecheck": "bun run typecheck:runtime && bun run typecheck:host && tsc --project test/tsconfig.json",
     "test:unit": "bun test --timeout 10000 test/unit",
     "test:integration": "bun test --timeout 30000 test/integration",
     "test": "bun run test:unit && bun run test:integration",
-    "build": "bun build --target=bun --packages=external --root=. --outdir=dist index.ts participant/worker.js",
+    "build": "bun build --target=bun --packages=external --root=. --outdir=dist index.ts participant/worker.js cli/agentopoly.ts",
     "check": "bun run format && bun run lint && bun run typecheck && bun run test && bun run build"
   },
   "devDependencies": {
@@ -30,6 +35,7 @@
     "@tetherto/wdk-cli": "1.0.0-beta.3",
     "effect": "^3.22.1",
     "hyperswarm": "^4.17.0",
+    "oh-my-pi": "0.2.0",
     "pear-runtime": "^1.3.1"
   }
 }

@@ -1,0 +1,11 @@
+{
+  "version": "1",
+  "orchestrator": {
+    "agentName": "agentopoly",
+    "promptTemplate": "sisyphus",
+    "disabledAgents": ["oracle", "librarian", "explore"],
+  },
+  "logging": {
+    "level": "error",
+  },
+}

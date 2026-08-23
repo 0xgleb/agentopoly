@@ -13,7 +13,14 @@ Audit commands are evidence, not an assertion that a required sponsor beta is cl
 | `@tetherto/wdk`     | `1.0.0-beta.16` | Future local wallet adapter only; never remote wallet authority.                                        |
 | `@tetherto/wdk-cli` | `1.0.0-beta.3`  | Future operator-local sidecar only; never imported into the Pear worker or provider workspace.          |
 | `hyperswarm`        | `4.17.0`        | Candidate P2P transport; network bytes remain untrusted until bounded decoding and signature admission. |
+| `oh-my-pi`          | `0.2.0`         | Provider-host prompt orchestration only; its broad tools are disabled by the Agentopoly extension.      |
 | `pear-runtime`      | `1.3.1`         | Pear host and worker lifecycle; no wallet authority.                                                    |
+
+### Oh My Pi intake
+
+The exact `oh-my-pi` `0.2.0` release is MIT licensed, requires Node.js 22.19 or newer, depends on `zod` `3.24.4`, and resolves its Pi peer to the pinned `@earendil-works/pi-coding-agent` `0.84.2`. It has no install lifecycle script or native binary dependency. Agentopoly loads the published `dist/extension.js` explicitly after Bun's frozen install.
+
+The published `oh-my-pi` executable is not used: its `.js` file contains an unstripped TypeScript annotation and fails under Node 22.23.2. The extension bundle itself is valid JavaScript. Oh My Pi registers generic file-search and interactive-shell tools, so the later-loaded Agentopoly extension replaces the active tool set with only the fixture-scoped inspect and submit tools before a provider can act. Oh My Pi receives no wallet, WDK, network, or unrestricted provider-workspace capability.
 
 ### WDK CLI intake
 
