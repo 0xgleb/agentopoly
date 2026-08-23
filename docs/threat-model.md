@@ -61,6 +61,7 @@ No money-moving implementation may start until its abuse tests exist and fail fo
 | Elevation of privilege | Model output writes outside fixture or changes acceptance command                                                   | Disposable workspace, path confinement, local command map, no model shell authority                                                                                                                                                             |
 | Elevation of privilege | Duplicate/replayed success or a crash after broadcast triggers a second payment                                     | Atomically reserve one authorization key before broadcast; persist attempt and transaction state; treat tuple-only history matches as candidates; keep ambiguous attempts reserved and never auto-release or retry                              |
 | Spoofing               | Forged or partial capability-observation record creates a browser marketplace card                                  | Decode the bounded `capability.observed` envelope and every capability field; require locally recorded `live-peer` provenance; render no capability or authority from a rejected record                                                         |
+| Elevation of privilege | A peer capability claim creates wallet, verification, settlement, or reputation authority                           | Append `capability.observed` only after signed protocol and market admission; records are evidence-only and no authority consumer accepts them                                                                                                  |
 
 ## Capped automatic wallet policy
 
@@ -102,6 +103,7 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 - compressed frame is rejected before decompression or payload allocation;
 - forged capability advertisements cannot create or overwrite a local market entry;
 - a replayed, duplicate, stale, withdrawn, or conflicting capability advertisement cannot revive or replace newer local market state;
+- malformed, expired, replayed, withdrawn, or refused capability advertisements append no `capability.observed` record; an accepted record grants no wallet, verification, settlement, or reputation authority;
 - unknown version and message type fail closed;
 - same semantic terms with different serialization cannot produce ambiguous hashes;
 - unsupported or corrupt persisted-record schema versions keep networking closed;
