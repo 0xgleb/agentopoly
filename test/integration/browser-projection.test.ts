@@ -4,6 +4,7 @@ import { projectEventLog } from '../../browser/projection.ts'
 
 const artifactHash = 'a'.repeat(64)
 const recordedAt = '2026-08-21T12:00:00.000Z'
+const expiresAt = new Date('2026-08-21T12:10:00.000Z').getTime()
 
 const eventLog = (events: readonly Readonly<Record<string, unknown>>[]): string =>
   events.map((event) => JSON.stringify(event)).join('\n')
@@ -16,6 +17,31 @@ const liveEvent = (
   recordedAt,
   schemaVersion: 1,
   type,
+  ...fields,
+})
+
+const capabilityObserved = (
+  fields: Readonly<Record<string, unknown>> = {},
+): Readonly<Record<string, unknown>> => ({
+  capabilityId: 'normalize-market-handle',
+  envelopeKeyRevision: 1,
+  envelopeMessageId: 'capability-message-a',
+  envelopePayloadHash: 'b'.repeat(64),
+  envelopeSenderIdentity: 'provider-alpha',
+  evidenceHash: 'c'.repeat(64),
+  evidenceSource: 'live-peer',
+  evidenceSummary: 'signed advertisement admitted by the local capability market',
+  expiresAt,
+  inputContract: 'utf8 handle',
+  limits: 'one normalized handle per request',
+  outputContract: 'normalized lowercase handle',
+  priceBasis: 'quoted per request',
+  providerIdentity: 'provider-alpha',
+  recordedAt,
+  revision: 1,
+  schemaVersion: 1,
+  type: 'capability.observed',
+  withdrawal: false,
   ...fields,
 })
 
@@ -73,7 +99,7 @@ describe('browser economy projection', () => {
           verification: 'passed',
         }),
       ])
-      expect(projection.unobserved).toEqual(['capability discovery', 'signed terms'])
+      expect(projection.unobserved).toEqual(['capability discovery', 'signed terms', 'arbitration'])
     }
   })
 
@@ -126,6 +152,75 @@ describe('browser economy projection', () => {
     }
   })
 
+  test('projects a bounded locally admitted capability without creating a job or authority', () => {
+    const projection = projectEventLog(eventLog([capabilityObserved()]), new Date(recordedAt))
+
+    expect(projection).toEqual({
+      _tag: 'projection',
+      agents: [],
+      capabilities: [
+        {
+          capabilityId: 'normalize-market-handle',
+          evidenceSummary: 'signed advertisement admitted by the local capability market',
+          expiresAt,
+          inputContract: 'utf8 handle',
+          limits: 'one normalized handle per request',
+          outputContract: 'normalized lowercase handle',
+          priceBasis: 'quoted per request',
+          providerIdentity: 'provider-alpha',
+          revision: 1,
+        },
+      ],
+      events: [],
+      jobs: [],
+      unobserved: ['signed terms', 'arbitration'],
+    })
+  })
+
+  test('refuses partial, forged, or expired capability observations and deduplicates exact evidence', () => {
+    const partial = projectEventLog(
+      eventLog([capabilityObserved({ evidenceHash: undefined })]),
+      new Date(recordedAt),
+    )
+    const forged = projectEventLog(
+      eventLog([capabilityObserved({ evidenceSource: 'live-agent-run' })]),
+      new Date(recordedAt),
+    )
+    const directAdvertisement = projectEventLog(
+      eventLog([capabilityObserved({ type: 'capability.advertise' })]),
+      new Date(recordedAt),
+    )
+    const expired = projectEventLog(
+      eventLog([capabilityObserved({ expiresAt: new Date(recordedAt).getTime() })]),
+      new Date(recordedAt),
+    )
+    const invalidDate = projectEventLog(
+      eventLog([capabilityObserved({ expiresAt: Number.MAX_SAFE_INTEGER })]),
+      new Date(recordedAt),
+    )
+    const staleRevision = projectEventLog(
+      eventLog([capabilityObserved({ revision: 2 }), capabilityObserved({ revision: 1 })]),
+      new Date(recordedAt),
+    )
+    const deduplicated = projectEventLog(
+      eventLog([capabilityObserved(), capabilityObserved()]),
+      new Date(recordedAt),
+    )
+
+    expect(partial).toEqual({ _tag: 'refused', reason: 'malformed-event-log' })
+    expect(forged).toEqual({ _tag: 'refused', reason: 'malformed-event-log' })
+    expect(directAdvertisement).toEqual({ _tag: 'refused', reason: 'malformed-event-log' })
+    expect(expired).toEqual({ _tag: 'refused', reason: 'malformed-event-log' })
+    expect(invalidDate).toEqual({ _tag: 'refused', reason: 'malformed-event-log' })
+    expect(staleRevision).toEqual({ _tag: 'refused', reason: 'malformed-event-log' })
+    expect(deduplicated._tag).toBe('projection')
+    if (deduplicated._tag === 'projection') {
+      expect(deduplicated.capabilities).toHaveLength(1)
+      expect(deduplicated.unobserved).toContain('signed terms')
+      expect(deduplicated.unobserved).not.toContain('capability discovery')
+    }
+  })
+
   test('ignores a bounded legacy receipt without deriving settlement or reputation', () => {
     const projection = projectEventLog(
       eventLog([
@@ -175,6 +270,7 @@ describe('browser economy projection', () => {
     expect(projection).toEqual({
       _tag: 'projection',
       agents: [],
+      capabilities: [],
       events: [],
       jobs: [],
       unobserved: ['capability discovery', 'signed terms'],

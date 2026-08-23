@@ -60,6 +60,7 @@ No money-moving implementation may start until its abuse tests exist and fail fo
 | Elevation of privilege | Remote message directly invokes WDK or a shell                                                                      | Strict capability separation; protocol events are data; local policy and reviewed adapters own side effects                                                                                                                                     |
 | Elevation of privilege | Model output writes outside fixture or changes acceptance command                                                   | Disposable workspace, path confinement, local command map, no model shell authority                                                                                                                                                             |
 | Elevation of privilege | Duplicate/replayed success or a crash after broadcast triggers a second payment                                     | Atomically reserve one authorization key before broadcast; persist attempt and transaction state; treat tuple-only history matches as candidates; keep ambiguous attempts reserved and never auto-release or retry                              |
+| Spoofing               | Forged or partial capability-observation record creates a browser marketplace card                                  | Decode the bounded `capability.observed` envelope and every capability field; require locally recorded `live-peer` provenance; render no capability or authority from a rejected record                                                         |
 
 ## Capped automatic wallet policy
 
@@ -159,6 +160,7 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 
 - local runtime event-log input is bounded before decoding; malformed, oversized, future, duplicate, and unsupported records produce a bounded refusal or one recorded projection rather than a fabricated economic event;
 - a bounded legacy `receipt.recorded` outer envelope is ignored until a versioned receipt decoder validates it; ignored fields cannot derive payment, settlement, reputation, or raw browser data;
+- malformed, partial, expired, duplicate, or non-`live-peer` `capability.observed` records cannot project a capability, remove the capability-discovery absence marker, derive verification or reputation, or authorize a local action;
 - local browser client cannot call WDK directly;
 - stale projection is visibly stale and cannot authorize a command;
 - redacted evidence cannot be expanded by a client query;

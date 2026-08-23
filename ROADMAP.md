@@ -16,6 +16,7 @@ Exit gate: from a fresh clone, `direnv allow`, `bun install --frozen-lockfile`, 
 
 - [ ] [Run as a standalone Pear terminal participant](https://github.com/0xgleb/agentopoly/issues/2) - `planned`
 - [ ] [Show a polished judge experience](https://github.com/0xgleb/agentopoly/issues/14) - `planned`
+- [ ] [Project validated live-peer capabilities in browser](https://github.com/0xgleb/agentopoly/issues/40) - `in progress`
 
 Exit gate: one participant starts, reports its identity and role, exposes a bounded browser projection containing the live agent and job registry, shuts down cleanly, and passes a standalone package smoke test on every declared target platform.
 

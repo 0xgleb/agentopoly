@@ -5,6 +5,7 @@ const MAX_EVENT_LOG_BYTES = 1_048_576
 const MAX_EVENT_LINES = 4_096
 const MAX_EVENT_LINE_BYTES = 65_536
 const MAX_FUTURE_SKEW_MILLISECONDS = 30_000
+const MAX_JAVASCRIPT_DATE_MILLISECONDS = 8_640_000_000_000_000
 const STALE_AFTER_MILLISECONDS = 5 * 60 * 1_000
 
 type EventBase = Readonly<{
@@ -14,7 +15,29 @@ type EventBase = Readonly<{
   readonly workspace: string
 }>
 
+type CapabilityObservedEvent = Readonly<{
+  readonly capabilityId: string
+  readonly envelopeKeyRevision: number
+  readonly envelopeMessageId: string
+  readonly envelopePayloadHash: string
+  readonly envelopeSenderIdentity: string
+  readonly evidenceHash: string
+  readonly evidenceSummary: string
+  readonly expiresAt: number
+  readonly freshness: 'current' | 'stale'
+  readonly inputContract: string
+  readonly limits: string
+  readonly outputContract: string
+  readonly priceBasis: string
+  readonly providerIdentity: string
+  readonly recordedAt: string
+  readonly revision: number
+  readonly type: 'capability.observed'
+  readonly withdrawal: boolean
+}>
+
 type RecordedEvent =
+  | CapabilityObservedEvent
   | (EventBase &
       Readonly<{
         readonly profile: string
@@ -78,15 +101,30 @@ export type BrowserEventProjection = Readonly<{
   readonly freshness: 'current' | 'stale'
   readonly jobId: string
   readonly recordedAt: string
-  readonly type: RecordedEvent['type']
+  readonly type: Exclude<RecordedEvent, CapabilityObservedEvent>['type']
 }>
+
+export type BrowserCapabilityProjection = Readonly<{
+  readonly capabilityId: string
+  readonly evidenceSummary: string
+  readonly expiresAt: number
+  readonly inputContract: string
+  readonly limits: string
+  readonly outputContract: string
+  readonly priceBasis: string
+  readonly providerIdentity: string
+  readonly revision: number
+}>
+
+type UnobservedSurface = 'arbitration' | 'capability discovery' | 'signed terms'
 
 export type BrowserProjection = Readonly<{
   readonly _tag: 'projection'
   readonly agents: readonly BrowserAgentProjection[]
+  readonly capabilities: readonly BrowserCapabilityProjection[]
   readonly events: readonly BrowserEventProjection[]
   readonly jobs: readonly BrowserJobProjection[]
-  readonly unobserved: readonly ['capability discovery', 'signed terms']
+  readonly unobserved: readonly UnobservedSurface[]
 }>
 
 export type BrowserProjectionRefusal = Readonly<{
@@ -143,11 +181,103 @@ const decodeLine = (line: string): Effect.Effect<unknown, BrowserProjectionRefus
     catch: () => refusal('malformed-event-log'),
   })
 
+const isPositiveSafeInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 1
+
+const parseCapabilityObserved = (
+  value: Record<string, unknown>,
+  observedAt: Date,
+  index: number,
+): ParsedEvent | BrowserProjectionRefusal => {
+  const envelopeKeyRevision = value['envelopeKeyRevision']
+  const expiresAt = value['expiresAt']
+  const revision = value['revision']
+  const fields = [
+    'capabilityId',
+    'envelopeKeyRevision',
+    'envelopeMessageId',
+    'envelopePayloadHash',
+    'envelopeSenderIdentity',
+    'evidenceHash',
+    'evidenceSource',
+    'evidenceSummary',
+    'expiresAt',
+    'inputContract',
+    'limits',
+    'outputContract',
+    'priceBasis',
+    'providerIdentity',
+    'recordedAt',
+    'revision',
+    'schemaVersion',
+    'type',
+    'withdrawal',
+  ]
+  if (
+    !hasOnlyFields(value, fields) ||
+    value['schemaVersion'] !== 1 ||
+    value['evidenceSource'] !== 'live-peer' ||
+    !isBoundedString(value['capabilityId'], 1_024) ||
+    !isPositiveSafeInteger(envelopeKeyRevision) ||
+    !isBoundedString(value['envelopeMessageId'], 256) ||
+    !isHash(value['envelopePayloadHash']) ||
+    !isBoundedString(value['envelopeSenderIdentity'], 256) ||
+    !isHash(value['evidenceHash']) ||
+    !isBoundedString(value['evidenceSummary'], 1_024) ||
+    !isPositiveSafeInteger(expiresAt) ||
+    expiresAt > MAX_JAVASCRIPT_DATE_MILLISECONDS ||
+    !isBoundedString(value['inputContract'], 1_024) ||
+    !isBoundedString(value['limits'], 1_024) ||
+    !isBoundedString(value['outputContract'], 1_024) ||
+    !isBoundedString(value['priceBasis'], 1_024) ||
+    !isBoundedString(value['providerIdentity'], 256) ||
+    !isPositiveSafeInteger(revision) ||
+    typeof value['recordedAt'] !== 'string' ||
+    typeof value['withdrawal'] !== 'boolean' ||
+    value['envelopeSenderIdentity'] !== value['providerIdentity']
+  ) {
+    return refusal('malformed-event-log')
+  }
+  const timestamp = Date.parse(value['recordedAt'])
+  if (!Number.isFinite(timestamp)) return refusal('malformed-event-log')
+  if (timestamp - observedAt.getTime() > MAX_FUTURE_SKEW_MILLISECONDS)
+    return refusal('future-event')
+  if (!value['withdrawal'] && expiresAt <= observedAt.getTime()) {
+    return refusal('malformed-event-log')
+  }
+  return {
+    event: {
+      capabilityId: value['capabilityId'],
+      envelopeKeyRevision,
+      envelopeMessageId: value['envelopeMessageId'],
+      envelopePayloadHash: value['envelopePayloadHash'],
+      envelopeSenderIdentity: value['envelopeSenderIdentity'],
+      evidenceHash: value['evidenceHash'],
+      evidenceSummary: value['evidenceSummary'],
+      expiresAt,
+      freshness: observedAt.getTime() - timestamp > STALE_AFTER_MILLISECONDS ? 'stale' : 'current',
+      inputContract: value['inputContract'],
+      limits: value['limits'],
+      outputContract: value['outputContract'],
+      priceBasis: value['priceBasis'],
+      providerIdentity: value['providerIdentity'],
+      recordedAt: value['recordedAt'],
+      revision,
+      type: 'capability.observed',
+      withdrawal: value['withdrawal'],
+    },
+    index,
+  }
+}
+
 const parseEvent = (
   value: unknown,
   observedAt: Date,
   index: number,
 ): ParsedEvent | IgnoredLegacyReceipt | BrowserProjectionRefusal => {
+  if (isRecord(value) && value['type'] === 'capability.observed') {
+    return parseCapabilityObserved(value, observedAt, index)
+  }
   if (
     !isRecord(value) ||
     value['schemaVersion'] !== 1 ||
@@ -291,7 +421,7 @@ const eventFingerprint = (event: RecordedEvent): string => JSON.stringify(event)
 
 const jobFor = (
   jobs: Map<string, MutableJobProjection>,
-  event: RecordedEvent,
+  event: Exclude<RecordedEvent, CapabilityObservedEvent>,
 ): MutableJobProjection => {
   const existing = jobs.get(event.jobId)
   if (existing !== undefined) return existing
@@ -341,9 +471,36 @@ export const projectEventLog = (text: string, observedAt: Date): BrowserProjecti
       return true
     })
   const agents = new Map<string, BrowserAgentProjection>()
+  const capabilities = new Map<string, BrowserCapabilityProjection>()
+  const capabilityRevisions = new Map<string, CapabilityObservedEvent>()
   const jobs = new Map<string, MutableJobProjection>()
 
   for (const { event } of uniqueEvents) {
+    if (event.type === 'capability.observed') {
+      const key = JSON.stringify([event.providerIdentity, event.capabilityId])
+      const previous = capabilityRevisions.get(key)
+      if (previous !== undefined && event.revision <= previous.revision) {
+        return refusal('malformed-event-log')
+      }
+      capabilityRevisions.set(key, event)
+      if (event.withdrawal) {
+        capabilities.delete(key)
+      } else {
+        capabilities.set(key, {
+          capabilityId: event.capabilityId,
+          evidenceSummary: event.evidenceSummary,
+          expiresAt: event.expiresAt,
+          inputContract: event.inputContract,
+          limits: event.limits,
+          outputContract: event.outputContract,
+          priceBasis: event.priceBasis,
+          providerIdentity: event.providerIdentity,
+          revision: event.revision,
+        })
+      }
+      continue
+    }
+
     const job = jobFor(jobs, event)
     switch (event.type) {
       case 'provider.started':
@@ -381,16 +538,32 @@ export const projectEventLog = (text: string, observedAt: Date): BrowserProjecti
     }
   }
 
+  const projectedCapabilities = [...capabilities.values()].sort(
+    (left, right) =>
+      left.providerIdentity.localeCompare(right.providerIdentity) ||
+      left.capabilityId.localeCompare(right.capabilityId),
+  )
+
   return {
     _tag: 'projection',
     agents: [...agents.values()].sort((left, right) => left.profile.localeCompare(right.profile)),
-    events: uniqueEvents.map(({ event }) => ({
-      freshness: event.freshness,
-      jobId: event.jobId,
-      recordedAt: event.recordedAt,
-      type: event.type,
-    })),
+    capabilities: projectedCapabilities,
+    events: uniqueEvents.flatMap(({ event }) =>
+      event.type === 'capability.observed'
+        ? []
+        : [
+            {
+              freshness: event.freshness,
+              jobId: event.jobId,
+              recordedAt: event.recordedAt,
+              type: event.type,
+            },
+          ],
+    ),
     jobs: [...jobs.values()].sort((left, right) => left.jobId.localeCompare(right.jobId)),
-    unobserved: ['capability discovery', 'signed terms'],
+    unobserved:
+      projectedCapabilities.length === 0
+        ? ['capability discovery', 'signed terms', 'arbitration']
+        : ['signed terms', 'arbitration'],
   }
 }
