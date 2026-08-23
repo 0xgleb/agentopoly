@@ -220,6 +220,44 @@ const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailur
       catch: () => failure('verification-failed', 'provider did not submit an artifact'),
     })
     const artifactHash = createHash('sha256').update(submission, 'utf8').digest('hex')
+    const eventLog = yield* Effect.tryPromise({
+      try: async () => {
+        try {
+          return await readFile(eventsPath, 'utf8')
+        } catch (cause: unknown) {
+          if (cause instanceof Error && 'code' in cause && cause.code === 'ENOENT') return undefined
+          throw cause
+        }
+      },
+      catch: () => failure('verification-failed', 'could not read durable verification evidence'),
+    })
+    if (eventLog !== undefined) {
+      const existing = yield* Effect.either(
+        decodeLatestVerification(eventLog, relative(repositoryRoot, workspace)),
+      )
+      if (existing._tag === 'Right') {
+        if (
+          existing.right.artifactHash !== artifactHash ||
+          existing.right.termsHash !== termsHash
+        ) {
+          return yield* Effect.fail(
+            failure(
+              'verification-failed',
+              'durable verification conflicts with current artifact or terms',
+            ),
+          )
+        }
+        return existing.right.passed
+      }
+      if (existing.left._tag !== 'verification-not-found') {
+        return yield* Effect.fail(
+          failure(
+            'verification-failed',
+            'durable verification evidence is malformed or conflicting',
+          ),
+        )
+      }
+    }
     const verifierSource = yield* Effect.tryPromise({
       try: () => readFile(join(workspace, 'acceptance.test.ts'), 'utf8'),
       catch: () => failure('verification-failed', 'fixed verifier contract is unavailable'),
