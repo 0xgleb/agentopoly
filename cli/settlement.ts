@@ -7,8 +7,11 @@ export type SettlementFailure = Readonly<{
 
 export type VerificationObservation = Readonly<{
   readonly artifactHash: string
+  readonly evidenceHash: string
   readonly jobId: string
   readonly passed: boolean
+  readonly termsHash: string
+  readonly verifierHash: string
   readonly workspace: string
 }>
 
@@ -18,6 +21,7 @@ export type SettlementEvent =
       readonly evidenceSource: 'live-agent-run'
       readonly jobId: string
       readonly reason: 'missing-exact-payment-authorization' | 'verification-failed'
+      readonly termsHash: string
       readonly type: 'payment.refused'
       readonly wdkInvoked: false
       readonly workspace: string
@@ -27,6 +31,7 @@ export type SettlementEvent =
       readonly evidenceSource: 'live-agent-run'
       readonly jobId: string
       readonly paymentStatus: 'refused'
+      readonly termsHash: string
       readonly type: 'receipt.recorded'
       readonly verificationStatus: 'failed' | 'passed'
       readonly workspace: string
@@ -36,6 +41,7 @@ export type SettlementEvent =
       readonly evidenceSource: 'live-agent-run'
       readonly jobId: string
       readonly reason: 'failed-verification' | 'verified-delivery'
+      readonly termsHash: string
       readonly type: 'reputation.updated'
       readonly workspace: string
     }>
@@ -69,9 +75,15 @@ const decodeEvent = (line: string): Effect.Effect<DecodedEvent, SettlementFailur
       value['evidenceSource'] !== 'live-agent-run' ||
       typeof value['artifactHash'] !== 'string' ||
       !/^[a-f0-9]{64}$/.test(value['artifactHash']) ||
+      typeof value['evidenceHash'] !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(value['evidenceHash']) ||
       typeof value['jobId'] !== 'string' ||
       value['jobId'].trim().length === 0 ||
       typeof value['passed'] !== 'boolean' ||
+      typeof value['termsHash'] !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(value['termsHash']) ||
+      typeof value['verifierHash'] !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(value['verifierHash']) ||
       typeof value['recordedAt'] !== 'string' ||
       !Number.isFinite(Date.parse(value['recordedAt'])) ||
       typeof value['workspace'] !== 'string' ||
@@ -86,8 +98,11 @@ const decodeEvent = (line: string): Effect.Effect<DecodedEvent, SettlementFailur
       _tag: 'verification',
       value: {
         artifactHash: value['artifactHash'],
+        evidenceHash: value['evidenceHash'],
         jobId: value['jobId'],
         passed: value['passed'],
+        termsHash: value['termsHash'],
+        verifierHash: value['verifierHash'],
         workspace: value['workspace'],
       },
     }
@@ -125,6 +140,7 @@ export const deriveSettlementEvents = (
       evidenceSource: 'live-agent-run',
       jobId: verification.jobId,
       reason: verification.passed ? 'missing-exact-payment-authorization' : 'verification-failed',
+      termsHash: verification.termsHash,
       type: 'payment.refused',
       wdkInvoked: false,
       workspace: verification.workspace,
@@ -134,6 +150,7 @@ export const deriveSettlementEvents = (
       evidenceSource: 'live-agent-run',
       jobId: verification.jobId,
       paymentStatus: 'refused',
+      termsHash: verification.termsHash,
       type: 'receipt.recorded',
       verificationStatus,
       workspace: verification.workspace,
@@ -143,6 +160,7 @@ export const deriveSettlementEvents = (
       evidenceSource: 'live-agent-run',
       jobId: verification.jobId,
       reason: verification.passed ? 'verified-delivery' : 'failed-verification',
+      termsHash: verification.termsHash,
       type: 'reputation.updated',
       workspace: verification.workspace,
     },

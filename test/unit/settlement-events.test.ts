@@ -16,8 +16,11 @@ describe('live settlement decision events', () => {
           jobId: 'normalize-market-handle-v1',
           passed: true,
           recordedAt: '2026-08-22T23:00:00.000Z',
+          evidenceHash: 'd'.repeat(64),
           schemaVersion: 1,
+          termsHash: 'c'.repeat(64),
           type: 'verification.completed',
+          verifierHash: 'e'.repeat(64),
           workspace,
         })}\n`,
         workspace,
@@ -30,6 +33,7 @@ describe('live settlement decision events', () => {
         evidenceSource: 'live-agent-run',
         jobId: 'normalize-market-handle-v1',
         reason: 'missing-exact-payment-authorization',
+        termsHash: 'c'.repeat(64),
         type: 'payment.refused',
         wdkInvoked: false,
         workspace,
@@ -39,6 +43,7 @@ describe('live settlement decision events', () => {
         evidenceSource: 'live-agent-run',
         jobId: 'normalize-market-handle-v1',
         paymentStatus: 'refused',
+        termsHash: 'c'.repeat(64),
         type: 'receipt.recorded',
         verificationStatus: 'passed',
         workspace,
@@ -48,6 +53,7 @@ describe('live settlement decision events', () => {
         evidenceSource: 'live-agent-run',
         jobId: 'normalize-market-handle-v1',
         reason: 'verified-delivery',
+        termsHash: 'c'.repeat(64),
         type: 'reputation.updated',
         workspace,
       },
@@ -63,8 +69,11 @@ describe('live settlement decision events', () => {
           jobId: 'normalize-market-handle-v1',
           passed: false,
           recordedAt: '2026-08-22T23:00:00.000Z',
+          evidenceHash: 'd'.repeat(64),
           schemaVersion: 1,
+          termsHash: 'c'.repeat(64),
           type: 'verification.completed',
+          verifierHash: 'e'.repeat(64),
           workspace,
         })}\n`,
         workspace,
@@ -82,6 +91,26 @@ describe('live settlement decision events', () => {
       reason: 'failed-verification',
       type: 'reputation.updated',
     })
+  })
+
+  test('refuses a verification event without all payment-binding hashes', async () => {
+    const unbound = await Effect.runPromiseExit(
+      decodeLatestVerification(
+        `${JSON.stringify({
+          artifactHash: 'a'.repeat(64),
+          evidenceSource: 'live-agent-run',
+          jobId: 'normalize-market-handle-v1',
+          passed: true,
+          recordedAt: '2026-08-22T23:00:00.000Z',
+          schemaVersion: 1,
+          type: 'verification.completed',
+          workspace,
+        })}\n`,
+        workspace,
+      ),
+    )
+
+    expect(unbound._tag).toBe('Failure')
   })
 
   test('fails closed on malformed or missing verification evidence', async () => {

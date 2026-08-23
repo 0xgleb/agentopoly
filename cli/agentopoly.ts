@@ -125,8 +125,21 @@ const runProvider = (
     return run
   })
 
+const requireTermsHash = (): Effect.Effect<string, CliFailure> => {
+  const termsHash = Bun.env['AGENTOPOLY_TERMS_HASH']
+  return typeof termsHash === 'string' && /^[a-f0-9]{64}$/.test(termsHash)
+    ? Effect.succeed(termsHash)
+    : Effect.fail(
+        failure(
+          'invalid-command',
+          'verification requires AGENTOPOLY_TERMS_HASH from the exact signed agreement',
+        ),
+      )
+}
+
 const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailure> =>
   Effect.gen(function* () {
+    const termsHash = yield* requireTermsHash()
     const workspace = resolve(repositoryRoot, workspaceCandidate)
     const relation = relative(runsRoot, workspace)
     if (relation.length === 0 || relation.startsWith('..')) {
@@ -140,6 +153,11 @@ const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailur
       catch: () => failure('verification-failed', 'provider did not submit an artifact'),
     })
     const artifactHash = createHash('sha256').update(submission, 'utf8').digest('hex')
+    const verifierSource = yield* Effect.tryPromise({
+      try: () => readFile(join(workspace, 'acceptance.test.ts'), 'utf8'),
+      catch: () => failure('verification-failed', 'fixed verifier contract is unavailable'),
+    })
+    const verifierHash = createHash('sha256').update(verifierSource, 'utf8').digest('hex')
     const exitCode = yield* Effect.tryPromise({
       try: async () => {
         const child = Bun.spawn(['bun', 'test', '--timeout', '10000', 'acceptance.test.ts'], {
@@ -152,12 +170,18 @@ const verifyRun = (workspaceCandidate: string): Effect.Effect<boolean, CliFailur
       catch: () => failure('verification-failed', 'fixed verifier process could not start'),
     })
     const passed = exitCode === 0
+    const evidenceHash = createHash('sha256')
+      .update(JSON.stringify({ artifactHash, exitCode, termsHash, verifierHash }), 'utf8')
+      .digest('hex')
     yield* appendEvent({
       artifactHash,
+      evidenceHash,
       evidenceSource: 'live-agent-run',
       jobId: 'normalize-market-handle-v1',
       passed,
+      termsHash,
       type: 'verification.completed',
+      verifierHash,
       workspace: relative(repositoryRoot, workspace),
     })
     return passed
