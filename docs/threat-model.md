@@ -152,11 +152,14 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 ### Arbitration
 
 - a malformed, cross-job, duplicate, replayed, or stale dispute bundle is rejected before any original or arbitrator WDK path;
+- the dispute hash binds its submission time so replay cannot refresh stale evidence without changing the ruling witness;
 - evidence from another job cannot enter the bundle;
 - missing party signature is visible and cannot be invented;
 - ruling references only supplied evidence hashes;
 - ruling for a different terms hash is rejected;
-- arbitrator payment follows a separate verified agreement;
+- a signed ruling without a passed verification bound to the distinct arbitration job, terms, and ruling artifact creates no settlement intent;
+- arbitrator payment follows a separate verified agreement and exact amount, destination, network, attempt, and authorization witnesses;
+- a receipt is recorded only as a schema-version-2 arbitration-job event; a cross-job or partial receipt cannot become payment evidence;
 - arbitrator cannot trigger or rewrite original payment outside signed policy.
 
 ### Presentation

@@ -1,12 +1,19 @@
 import * as Brand from 'effect/Brand'
 import * as Effect from 'effect/Effect'
 
-import type { EvidenceHash, JobId } from './job-lifecycle.ts'
-import type {
-  AgreedTerms,
+import {
+  EvidenceHash,
+  JobId,
+  type AtomicAmount,
+  type NetworkId,
+  type WalletDestination,
+} from './job-lifecycle.ts'
+import {
   TermsHash,
   TermsSignature,
-  TermsSignatureVerifier,
+  encodeExactJobTerms,
+  type AgreedTerms,
+  type TermsSignatureVerifier,
 } from './exact-job-terms.ts'
 import { hashProtocolBytes } from '../protocol/envelope-boundary.ts'
 import { createPaymentReceipt, type PaymentReceipt } from '../cli/payment-receipt.ts'
@@ -23,11 +30,23 @@ export const DisputeStatement = Brand.refined<DisputeStatement>(
   () => Brand.error('dispute statement must be bounded'),
 )
 
+export type ArbitrationAttemptId = string & Brand.Brand<'ArbitrationAttemptId'>
+export const ArbitrationAttemptId = Brand.refined<ArbitrationAttemptId>(
+  (value) => value.trim().length > 0 && new TextEncoder().encode(value).byteLength <= 256,
+  () => Brand.error('arbitration attempt ID must be bounded'),
+)
+
+export type ArbitrationAuthorizationKey = string & Brand.Brand<'ArbitrationAuthorizationKey'>
+export const ArbitrationAuthorizationKey = Brand.refined<ArbitrationAuthorizationKey>(
+  (value) => value.trim().length > 0 && new TextEncoder().encode(value).byteLength <= 256,
+  () => Brand.error('arbitration authorization key must be bounded'),
+)
+
 export type FailedOriginalVerification = Readonly<{
   readonly _tag: 'failed-original-verification'
   readonly artifactHash: EvidenceHash
   readonly jobId: JobId
-  readonly termsHash: EvidenceHash
+  readonly termsHash: TermsHash
   readonly verificationHash: EvidenceHash
 }>
 
@@ -56,15 +75,43 @@ export type SignedArbitrationRuling = Readonly<{
   readonly signature: TermsSignature
 }>
 
+export type ArbitrationVerification = Readonly<{
+  readonly _tag: 'failed-arbitration-verification' | 'passed-arbitration-verification'
+  readonly artifactHash: EvidenceHash
+  readonly jobId: JobId
+  readonly termsHash: TermsHash
+  readonly verificationHash: EvidenceHash
+}>
+
 export type ArbitrationSettlementIntent = Readonly<{
   readonly arbitrationJobId: JobId
   readonly arbitrationTermsHash: TermsHash
+  readonly atomicAmount: AtomicAmount
+  readonly destination: WalletDestination
   readonly disputeHash: DisputeHash
+  readonly network: NetworkId
   readonly paymentAuthority: 'arbitration-job-only'
   readonly rulingArtifactHash: EvidenceHash
   readonly rulingOutcome: SignedArbitrationRuling['outcome']
   readonly rulingVerificationHash: EvidenceHash
 }>
+
+export type ArbitrationReceiptContext = Readonly<{
+  readonly attemptId: ArbitrationAttemptId
+  readonly authorizationKey: ArbitrationAuthorizationKey
+  readonly recordedAt: string
+  readonly workspace: string
+}>
+
+export type ArbitrationReceiptRecordedEvent = PaymentReceipt &
+  Readonly<{
+    readonly evidenceSource: 'live-agent-run'
+    readonly jobId: JobId
+    readonly recordedAt: string
+    readonly schemaVersion: 2
+    readonly type: 'receipt.recorded'
+    readonly workspace: string
+  }>
 
 export type ArbitrationFailure = Readonly<{
   readonly _tag: 'conflicting-dispute' | 'invalid-dispute' | 'invalid-ruling' | 'stale-dispute'
@@ -82,8 +129,16 @@ const failure = (_tag: ArbitrationFailure['_tag'], reason: string): ArbitrationF
 
 const hex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
-const field = (value: string): Uint8Array =>
-  new TextEncoder().encode(String(value.length) + ':' + value)
+const field = (value: string): Uint8Array => {
+  const bytes = new TextEncoder().encode(value)
+  return new Uint8Array([
+    bytes.length >>> 24,
+    bytes.length >>> 16,
+    bytes.length >>> 8,
+    bytes.length,
+    ...bytes,
+  ])
+}
 const disputeBytes = (bundle: DisputeBundle): Uint8Array =>
   new Uint8Array([
     ...field(bundle.disputeId),
@@ -92,6 +147,7 @@ const disputeBytes = (bundle: DisputeBundle): Uint8Array =>
     ...field(bundle.original.artifactHash),
     ...field(bundle.original.verificationHash),
     ...field(bundle.statement),
+    ...field(String(bundle.submittedAt)),
   ])
 export const hashDisputeBundle = (bundle: DisputeBundle): DisputeHash =>
   DisputeHash(hex(hashProtocolBytes(disputeBytes(bundle))))
@@ -114,83 +170,240 @@ export const createDisputeStore = (): DisputeStore => {
   }
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const hasOnlyFields = (value: Record<string, unknown>, fields: readonly string[]): boolean => {
+  const allowed = new Set(fields)
+  return Object.keys(value).every((key) => allowed.has(key))
+}
+
+const decodeFailedOriginal = (value: unknown): FailedOriginalVerification | undefined => {
+  if (
+    !isRecord(value) ||
+    !hasOnlyFields(value, ['_tag', 'artifactHash', 'jobId', 'termsHash', 'verificationHash']) ||
+    value['_tag'] !== 'failed-original-verification' ||
+    typeof value['artifactHash'] !== 'string' ||
+    !EvidenceHash.is(value['artifactHash']) ||
+    typeof value['jobId'] !== 'string' ||
+    !JobId.is(value['jobId']) ||
+    typeof value['termsHash'] !== 'string' ||
+    !TermsHash.is(value['termsHash']) ||
+    typeof value['verificationHash'] !== 'string' ||
+    !EvidenceHash.is(value['verificationHash'])
+  ) {
+    return undefined
+  }
+  return {
+    _tag: value['_tag'],
+    artifactHash: EvidenceHash(value['artifactHash']),
+    jobId: JobId(value['jobId']),
+    termsHash: TermsHash(value['termsHash']),
+    verificationHash: EvidenceHash(value['verificationHash']),
+  }
+}
+
+const validRuling = (value: unknown): value is SignedArbitrationRuling =>
+  isRecord(value) &&
+  typeof value['arbitrationTermsHash'] === 'string' &&
+  TermsHash.is(value['arbitrationTermsHash']) &&
+  typeof value['disputeHash'] === 'string' &&
+  DisputeHash.is(value['disputeHash']) &&
+  typeof value['issuedAt'] === 'number' &&
+  Number.isSafeInteger(value['issuedAt']) &&
+  value['issuedAt'] >= 0 &&
+  (value['outcome'] === 'buyer-prevails' || value['outcome'] === 'provider-prevails') &&
+  typeof value['rulingArtifactHash'] === 'string' &&
+  EvidenceHash.is(value['rulingArtifactHash']) &&
+  typeof value['rulingVerificationHash'] === 'string' &&
+  EvidenceHash.is(value['rulingVerificationHash']) &&
+  value['signature'] instanceof Uint8Array &&
+  TermsSignature.is(value['signature'])
+
+const validArbitrationVerification = (value: unknown): value is ArbitrationVerification =>
+  isRecord(value) &&
+  (value['_tag'] === 'passed-arbitration-verification' ||
+    value['_tag'] === 'failed-arbitration-verification') &&
+  typeof value['artifactHash'] === 'string' &&
+  EvidenceHash.is(value['artifactHash']) &&
+  typeof value['jobId'] === 'string' &&
+  JobId.is(value['jobId']) &&
+  typeof value['termsHash'] === 'string' &&
+  TermsHash.is(value['termsHash']) &&
+  typeof value['verificationHash'] === 'string' &&
+  EvidenceHash.is(value['verificationHash'])
+
+const equalBytes = (left: Uint8Array, right: Uint8Array): boolean =>
+  left.length === right.length && left.every((byte, index) => byte === right[index])
+
+const verifyArbitrationAgreement = (
+  agreement: AgreedTerms,
+  verifier: TermsSignatureVerifier,
+): Effect.Effect<void, ArbitrationFailure> =>
+  Effect.gen(function* () {
+    const canonicalBytes = yield* encodeExactJobTerms(agreement.terms).pipe(
+      Effect.mapError(() => failure('invalid-ruling', 'arbitration agreement terms are invalid')),
+    )
+    if (
+      !equalBytes(canonicalBytes, agreement.canonicalBytes) ||
+      hex(hashProtocolBytes(canonicalBytes)) !== agreement.termsHash
+    ) {
+      return yield* Effect.fail(
+        failure('invalid-ruling', 'arbitration agreement canonical binding is invalid'),
+      )
+    }
+    yield* verifier
+      .verify({
+        bytes: canonicalBytes,
+        signer: agreement.terms.buyer,
+        signature: agreement.buyerSignature,
+      })
+      .pipe(
+        Effect.mapError(() => failure('invalid-ruling', 'arbitration buyer signature is invalid')),
+      )
+    yield* verifier
+      .verify({
+        bytes: canonicalBytes,
+        signer: agreement.terms.provider,
+        signature: agreement.providerSignature,
+      })
+      .pipe(
+        Effect.mapError(() =>
+          failure('invalid-ruling', 'arbitration provider signature is invalid'),
+        ),
+      )
+  })
+
 export const disputeBundle = (
   input: Readonly<{
     readonly disputeId: string
-    readonly original: FailedOriginalVerification
+    readonly original: unknown
     readonly statement: string
     readonly submittedAt: number
   }>,
-): Effect.Effect<DisputeBundle, ArbitrationFailure> =>
-  Number.isSafeInteger(input.submittedAt) &&
-  input.submittedAt >= 0 &&
-  DisputeId.is(input.disputeId) &&
-  DisputeStatement.is(input.statement)
+): Effect.Effect<DisputeBundle, ArbitrationFailure> => {
+  const original = decodeFailedOriginal(input.original)
+  return Number.isSafeInteger(input.submittedAt) &&
+    input.submittedAt >= 0 &&
+    DisputeId.is(input.disputeId) &&
+    DisputeStatement.is(input.statement) &&
+    original !== undefined
     ? Effect.succeed({
-        ...input,
         disputeId: DisputeId(input.disputeId),
+        original,
         statement: DisputeStatement(input.statement),
+        submittedAt: input.submittedAt,
       })
     : Effect.fail(failure('invalid-dispute', 'dispute bundle violates its bounded contract'))
+}
 
 export const admitArbitrationRuling = (
   dispute: AdmittedDispute,
   agreement: AgreedTerms,
   ruling: SignedArbitrationRuling,
+  verification: ArbitrationVerification,
   now: number,
   verifier: TermsSignatureVerifier,
-): Effect.Effect<ArbitrationSettlementIntent, ArbitrationFailure> => {
-  if (!Number.isSafeInteger(now) || now < ruling.issuedAt || now - ruling.issuedAt > 60_000)
-    return Effect.fail(failure('stale-dispute', 'arbitration ruling is stale'))
-  if (
-    agreement.terms.jobId === dispute.original.jobId ||
-    agreement.termsHash !== ruling.arbitrationTermsHash ||
-    hashDisputeBundle(dispute) !== ruling.disputeHash
-  )
-    return Effect.fail(
-      failure(
-        'invalid-ruling',
-        'ruling is not bound to a distinct arbitration job and admitted dispute',
-      ),
-    )
-  return Effect.mapError(
-    verifier.verify({
-      bytes: encodeArbitrationRuling(ruling),
-      signer: agreement.terms.provider,
-      signature: ruling.signature,
-    }),
-    () => failure('invalid-ruling', 'arbitrator signature is invalid'),
-  ).pipe(
-    Effect.as({
+): Effect.Effect<ArbitrationSettlementIntent, ArbitrationFailure> =>
+  Effect.gen(function* () {
+    if (!validRuling(ruling)) {
+      return yield* Effect.fail(failure('invalid-ruling', 'arbitration ruling is invalid'))
+    }
+    if (!Number.isSafeInteger(now) || now < ruling.issuedAt || now - ruling.issuedAt > 60_000) {
+      return yield* Effect.fail(failure('stale-dispute', 'arbitration ruling is stale'))
+    }
+    if (
+      agreement.terms.jobId === dispute.original.jobId ||
+      agreement.termsHash !== ruling.arbitrationTermsHash ||
+      hashDisputeBundle(dispute) !== ruling.disputeHash
+    ) {
+      return yield* Effect.fail(
+        failure(
+          'invalid-ruling',
+          'ruling is not bound to a distinct arbitration job and admitted dispute',
+        ),
+      )
+    }
+    if (
+      !validArbitrationVerification(verification) ||
+      verification._tag !== 'passed-arbitration-verification' ||
+      verification.jobId !== agreement.terms.jobId ||
+      verification.termsHash !== agreement.termsHash ||
+      verification.artifactHash !== ruling.rulingArtifactHash ||
+      verification.verificationHash !== ruling.rulingVerificationHash
+    ) {
+      return yield* Effect.fail(
+        failure('invalid-ruling', 'ruling lacks exact passed arbitration verification'),
+      )
+    }
+
+    yield* verifyArbitrationAgreement(agreement, verifier)
+    yield* verifier
+      .verify({
+        bytes: encodeArbitrationRuling(ruling),
+        signer: agreement.terms.provider,
+        signature: ruling.signature,
+      })
+      .pipe(Effect.mapError(() => failure('invalid-ruling', 'arbitrator signature is invalid')))
+
+    return {
       arbitrationJobId: agreement.terms.jobId,
       arbitrationTermsHash: agreement.termsHash,
+      atomicAmount: agreement.terms.price,
+      destination: agreement.terms.destination,
       disputeHash: ruling.disputeHash,
+      network: agreement.terms.network,
       paymentAuthority: 'arbitration-job-only',
       rulingArtifactHash: ruling.rulingArtifactHash,
       rulingOutcome: ruling.outcome,
-      rulingVerificationHash: ruling.rulingVerificationHash,
-    }),
+      rulingVerificationHash: verification.verificationHash,
+    }
+  })
+
+const validReceiptContext = (context: ArbitrationReceiptContext): boolean => {
+  const timestamp = Date.parse(context.recordedAt)
+  return (
+    ArbitrationAttemptId.is(context.attemptId) &&
+    ArbitrationAuthorizationKey.is(context.authorizationKey) &&
+    context.workspace.trim().length > 0 &&
+    new TextEncoder().encode(context.workspace).byteLength <= 1_024 &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(context.recordedAt) &&
+    Number.isFinite(timestamp) &&
+    new Date(timestamp).toISOString() === context.recordedAt
   )
 }
 
 export const recordArbitrationReceipt = (
   intent: ArbitrationSettlementIntent,
+  context: ArbitrationReceiptContext,
   receipt: PaymentReceipt,
-): Effect.Effect<PaymentReceipt, ArbitrationFailure> => {
+): Effect.Effect<ArbitrationReceiptRecordedEvent, ArbitrationFailure> => {
   const result = createPaymentReceipt(receipt)
   if (
     !result.ok ||
+    !validReceiptContext(context) ||
     receipt.termsHash !== intent.arbitrationTermsHash ||
     receipt.artifactHash !== intent.rulingArtifactHash ||
     receipt.verificationHash !== intent.rulingVerificationHash ||
-    !receipt.attemptId.startsWith(`${intent.arbitrationJobId}:`) ||
-    !receipt.authorizationKey.startsWith(`${intent.arbitrationJobId}:`)
+    receipt.atomicAmount !== intent.atomicAmount.toString() ||
+    receipt.destination !== intent.destination ||
+    receipt.network !== intent.network ||
+    receipt.attemptId !== context.attemptId ||
+    receipt.authorizationKey !== context.authorizationKey
   ) {
     return Effect.fail(
       failure('invalid-ruling', 'receipt is not bound to the separate arbitration settlement'),
     )
   }
-  return Effect.succeed(result.value)
+  return Effect.succeed({
+    ...result.value,
+    evidenceSource: 'live-agent-run',
+    jobId: intent.arbitrationJobId,
+    recordedAt: context.recordedAt,
+    schemaVersion: 2,
+    type: 'receipt.recorded',
+    workspace: context.workspace,
+  })
 }
 
 export const admitDisputeBundle = (
