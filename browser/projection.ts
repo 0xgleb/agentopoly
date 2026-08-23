@@ -102,6 +102,8 @@ type ParsedEvent = Readonly<{
   readonly index: number
 }>
 
+type IgnoredLegacyReceipt = Readonly<{ readonly _tag: 'ignored-legacy-receipt' }>
+
 type MutableJobProjection = {
   artifactHash?: string
   jobId: string
@@ -145,7 +147,7 @@ const parseEvent = (
   value: unknown,
   observedAt: Date,
   index: number,
-): ParsedEvent | BrowserProjectionRefusal => {
+): ParsedEvent | IgnoredLegacyReceipt | BrowserProjectionRefusal => {
   if (
     !isRecord(value) ||
     value['schemaVersion'] !== 1 ||
@@ -178,6 +180,8 @@ const parseEvent = (
   }
 
   switch (value['type']) {
+    case 'receipt.recorded':
+      return { _tag: 'ignored-legacy-receipt' }
     case 'provider.started':
       if (!hasOnlyFields(value, [...commonFields, 'profile']) || !isProfile(value['profile'])) {
         return refusal('malformed-event-log')
@@ -316,7 +320,10 @@ export const projectEventLog = (text: string, observedAt: Date): BrowserProjecti
     if (Either.isLeft(decoded)) return decoded.left
 
     const parsed = parseEvent(decoded.right, observedAt, index)
-    if ('_tag' in parsed) return parsed
+    if ('_tag' in parsed) {
+      if (parsed._tag === 'refused') return parsed
+      continue
+    }
     parsedEvents.push(parsed)
   }
 

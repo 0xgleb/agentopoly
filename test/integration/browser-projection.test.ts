@@ -125,4 +125,76 @@ describe('browser economy projection', () => {
       expect(projection.events[1]?.type).toBe('provider.artifact-submitted')
     }
   })
+
+  test('ignores a bounded legacy receipt without deriving settlement or reputation', () => {
+    const projection = projectEventLog(
+      eventLog([
+        liveEvent('receipt.recorded', {
+          arbitraryLegacyReceiptField: 'must not reach the projection',
+          jobId: 'normalize-market-handle-v1',
+          settlementState: 'settled',
+          workspace: '.tmp/agentopoly-runs/run-1',
+        }),
+        liveEvent('payment.refused', {
+          artifactHash,
+          jobId: 'normalize-market-handle-v1',
+          reason: 'missing-exact-payment-authorization',
+          wdkInvoked: false,
+          workspace: '.tmp/agentopoly-runs/run-1',
+        }),
+      ]),
+      new Date(recordedAt),
+    )
+
+    expect(projection._tag).toBe('projection')
+    if (projection._tag === 'projection') {
+      expect(projection.events).toEqual([expect.objectContaining({ type: 'payment.refused' })])
+      expect(projection.jobs).toHaveLength(1)
+      expect(projection.jobs[0]?.payment).toEqual({
+        _tag: 'refused',
+        reason: 'missing-exact-payment-authorization',
+        wdkInvoked: false,
+      })
+    }
+  })
+
+  test('does not create a projection from legacy receipt fields alone', () => {
+    const projection = projectEventLog(
+      eventLog([
+        liveEvent('receipt.recorded', {
+          artifactHash,
+          jobId: 'legacy-receipt-job',
+          profile: 'forged-provider',
+          settlementState: 'settled',
+          workspace: '.tmp/agentopoly-runs/run-legacy',
+        }),
+      ]),
+      new Date(recordedAt),
+    )
+
+    expect(projection).toEqual({
+      _tag: 'projection',
+      agents: [],
+      events: [],
+      jobs: [],
+      unobserved: ['capability discovery', 'signed terms', 'arbitration'],
+    })
+  })
+
+  test('refuses a legacy receipt without the bounded common envelope', () => {
+    const projection = projectEventLog(
+      eventLog([
+        {
+          evidenceSource: 'live-agent-run',
+          jobId: 'normalize-market-handle-v1',
+          recordedAt,
+          schemaVersion: 1,
+          type: 'receipt.recorded',
+        },
+      ]),
+      new Date(recordedAt),
+    )
+
+    expect(projection).toEqual({ _tag: 'refused', reason: 'malformed-event-log' })
+  })
 })

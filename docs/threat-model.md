@@ -151,6 +151,7 @@ The selected Track 1 contract uses `@tetherto/wdk-cli` `1.0.0-beta.3`: the walle
 ### Presentation
 
 - local runtime event-log input is bounded before decoding; malformed, oversized, future, duplicate, and unsupported records produce a bounded refusal or one recorded projection rather than a fabricated economic event;
+- a bounded legacy `receipt.recorded` outer envelope is ignored until a versioned receipt decoder validates it; ignored fields cannot derive payment, settlement, reputation, or raw browser data;
 - local browser client cannot call WDK directly;
 - stale projection is visibly stale and cannot authorize a command;
 - redacted evidence cannot be expanded by a client query;
