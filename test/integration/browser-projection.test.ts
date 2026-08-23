@@ -273,7 +273,7 @@ describe('browser economy projection', () => {
       capabilities: [],
       events: [],
       jobs: [],
-      unobserved: ['capability discovery', 'signed terms', 'arbitration'],
+      unobserved: ['capability discovery', 'signed terms'],
     })
   })
 

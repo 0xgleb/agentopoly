@@ -80,7 +80,7 @@ const u32 = (value: number): Uint8Array =>
   Uint8Array.of(value >>> 24, value >>> 16, value >>> 8, value & 255)
 const u64 = (value: number): Uint8Array =>
   join([u32(Math.floor(value / 4_294_967_296)), u32(value >>> 0)])
-const encodeUtf8 = (value: string): Uint8Array | undefined => {
+export const encodeUtf8 = (value: string): Uint8Array | undefined => {
   const bytes: number[] = []
   for (let index = 0; index < value.length; index += 1) {
     const first = value.charCodeAt(index)
@@ -103,7 +103,7 @@ const encodeUtf8 = (value: string): Uint8Array | undefined => {
   return Uint8Array.from(bytes)
 }
 
-const decodeUtf8 = (bytes: Uint8Array): string | undefined => {
+export const decodeUtf8 = (bytes: Uint8Array): string | undefined => {
   if (!validUtf8(bytes)) return undefined
   let output = ''
   for (let index = 0; index < bytes.length; index += 1) {

@@ -48,19 +48,20 @@ That package may simplify a future Bare integration, but it does not automatical
 
 ## Development tooling
 
-| Package             | Locked version | License    | Review                                                                       |
-| ------------------- | -------------- | ---------- | ---------------------------------------------------------------------------- |
-| `typescript`        | `5.9.3`        | Apache-2.0 | Compiler only; supported by the pinned lint stack.                           |
-| `eslint`            | `10.9.0`       | MIT        | Node-only development and CI linter.                                         |
-| `@eslint/js`        | `10.0.1`       | MIT        | Maintained JavaScript ruleset.                                               |
-| `typescript-eslint` | `8.67.0`       | MIT        | Strict typed TypeScript lint rules.                                          |
-| `prettier`          | `3.9.6`        | MIT        | Formatter only.                                                              |
-| `@types/bun`        | `1.4.0`        | MIT        | Test-only Bun declarations; runtime typechecking excludes ambient packages.  |
-| `@types/node`       | `26.2.0`       | MIT        | Type-only dependency required by Bun declarations; never a Node runtime pin. |
+| Package             | Locked version | License    | Review                                                                                                                      |
+| ------------------- | -------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `typescript`        | `5.9.3`        | Apache-2.0 | Compiler only; supported by the pinned lint stack.                                                                          |
+| `eslint`            | `10.9.0`       | MIT        | Node-only development and CI linter.                                                                                        |
+| `@eslint/js`        | `10.0.1`       | MIT        | Maintained JavaScript ruleset.                                                                                              |
+| `typescript-eslint` | `8.67.0`       | MIT        | Strict typed TypeScript lint rules.                                                                                         |
+| `prettier`          | `3.9.6`        | MIT        | Formatter only.                                                                                                             |
+| `@types/bun`        | `1.4.0`        | MIT        | Test-only Bun declarations; runtime typechecking excludes ambient packages.                                                 |
+| `@types/node`       | `26.2.0`       | MIT        | Type-only dependency required by Bun declarations; never a Node runtime pin.                                                |
+| `hyperdht`          | `6.33.2`       | MIT        | Test-only local DHT bootstrap for deterministic multi-process Hyperswarm proof; never loaded by the production Pear worker. |
 
 `@types/node` `26.2.0` has no lifecycle scripts and depends only on `undici-types ~8.3.0`. The root runtime TypeScript config sets `types: []`, so Agentopoly production source cannot acquire Node globals from this package. Only the test config loads `bun`; Bun's declarations require the newer Node declaration surface. The exact `@types/bun`/`@types/node`/TypeScript combination compiles when TypeScript is launched by the pinned Node 22.23.2 development runtime, and the earlier quality-gate PR passed on CI Node 22.18.0 with the same resolved type pair.
 
-The reviewed direct development packages have no lifecycle install hooks. Their Node-oriented execution is reachable only through package scripts and CI, never from the Pear/Bare runtime module.
+The reviewed direct development packages have no lifecycle install hooks. Their Node-oriented execution is reachable only through package scripts and CI, never from the Pear/Bare runtime module. `hyperdht` is the official maintained DHT implementation already transitive to `hyperswarm`; its source declares Bare-compatible import mappings, uses no install hooks, is MIT licensed, and pulls cryptographic/native-compatible transport dependencies (`sodium-universal`, `dht-rpc`, Noise stream support). It is added directly only to create an isolated in-process bootstrap during integration tests, avoiding public-DHT dependence; it never crosses into the production worker's authority or wallet boundary.
 
 ## Intake rules
 

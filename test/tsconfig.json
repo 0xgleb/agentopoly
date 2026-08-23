@@ -4,5 +4,10 @@
     "lib": ["ESNext"],
     "types": ["bun"]
   },
-  "include": ["./**/*.ts", "../participant/**/*.test.ts", "../participant/pear-runtime-module.d.ts"]
+  "include": [
+    "./**/*.ts",
+    "../market/**/*.test.ts",
+    "../participant/**/*.test.ts",
+    "../participant/pear-runtime-module.d.ts"
+  ]
 }
