@@ -2,7 +2,11 @@ import { describe, expect, test } from 'bun:test'
 import * as Either from 'effect/Either'
 import * as Effect from 'effect/Effect'
 
-import { decodeSidecarCommand, type SidecarFailure } from '../../cli/wdk-sidecar-contract.ts'
+import {
+  decodeSidecarCommand,
+  isPreviewStillValid,
+  type SidecarFailure,
+} from '../../cli/wdk-sidecar-contract.ts'
 
 const termsHash = 'a'.repeat(64)
 const artifactHash = 'b'.repeat(64)
@@ -50,6 +54,29 @@ describe('WDK sidecar contract', () => {
     if (command.type === 'preview-payment') {
       expect(command.atomicAmount).toBe('1500000')
     }
+  })
+
+  test('refuses a stale reserved-payment preview at broadcast time', async () => {
+    const command = await Effect.runPromise(
+      decodeSidecarCommand({
+        artifactHash,
+        asset: 'USDt',
+        atomicAmount: '1500000',
+        authorizationKey: 'authorization-1',
+        destination: '0xprovider',
+        maximumNativeFee: '25000',
+        network: 'ethereum-sepolia',
+        previewExpiresAt: 100,
+        previewHash: 'd'.repeat(64),
+        sourceAccountIndex: 0,
+        sourceWallet: 'agentopoly-demo',
+        termsHash,
+        token: 'usdt',
+        type: 'broadcast-reserved-payment',
+        verificationHash,
+      }),
+    )
+    expect(isPreviewStillValid(command, 100)).toBe(false)
   })
 
   test('refuses raw tool names, decimal amounts, and incomplete reserved broadcasts', async () => {

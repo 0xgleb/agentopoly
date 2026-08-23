@@ -106,6 +106,9 @@ const common = (
   }
 }
 
+export const isPreviewStillValid = (command: SidecarCommand, now: number): boolean =>
+  command.type !== 'broadcast-reserved-payment' || command.previewExpiresAt > now
+
 export const decodeSidecarCommand = (
   input: unknown,
 ): Effect.Effect<SidecarCommand, SidecarFailure> => {

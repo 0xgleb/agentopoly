@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline'
 
 import * as Effect from 'effect/Effect'
 
-import { decodeSidecarCommand } from './wdk-sidecar-contract.ts'
+import { decodeSidecarCommand, isPreviewStillValid } from './wdk-sidecar-contract.ts'
 import {
   decodeBroadcastResult,
   decodePreviewResult,
@@ -65,6 +65,9 @@ const callWdkMcp = async (command) => {
   )
   if (!enforcesWdkSourceConfig(sourceConfig, command)) {
     throw new Error('WDK source request does not match reviewed local configuration')
+  }
+  if (!isPreviewStillValid(command, Date.now())) {
+    throw new Error('WDK payment preview has expired')
   }
   const child = spawn(process.execPath, [fileURLToPath(mcpEntrypoint)], {
     cwd: moduleRoot,
