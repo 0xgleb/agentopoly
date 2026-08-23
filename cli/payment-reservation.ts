@@ -3,16 +3,18 @@ import * as Effect from 'effect/Effect'
 export type ReservedPaymentAttempt = Readonly<{
   readonly attemptId: string
   readonly authorizationKey: string
+  readonly status: 'broadcasting' | 'reserved'
 }>
 
 export type PaymentReservationFailure = Readonly<{
-  readonly _tag: 'already-reserved' | 'invalid-reservation'
+  readonly _tag: 'already-reserved' | 'attempt-mismatch' | 'invalid-reservation'
   readonly reason: string
 }>
 
 export type PaymentReservations = Readonly<{
   readonly all: () => readonly ReservedPaymentAttempt[]
   readonly find: (authorizationKey: string) => ReservedPaymentAttempt | undefined
+  readonly replace: (attempt: ReservedPaymentAttempt) => boolean
   readonly reserve: (attempt: ReservedPaymentAttempt) => boolean
 }>
 
@@ -36,6 +38,11 @@ export const createPaymentReservations = (): PaymentReservations => {
   return {
     all: () => [...attempts.values()],
     find: (authorizationKey) => attempts.get(authorizationKey),
+    replace: (attempt) => {
+      if (!attempts.has(attempt.authorizationKey)) return false
+      attempts.set(attempt.authorizationKey, attempt)
+      return true
+    },
     reserve: (attempt) => {
       if (attempts.has(attempt.authorizationKey)) return false
       attempts.set(attempt.authorizationKey, attempt)
@@ -67,17 +74,35 @@ export const decodePaymentReservations = (
       !isRecord(attempt) ||
       typeof attempt['authorizationKey'] !== 'string' ||
       typeof attempt['attemptId'] !== 'string' ||
+      (attempt['status'] !== 'reserved' && attempt['status'] !== 'broadcasting') ||
       !identifier(attempt['authorizationKey']) ||
       !identifier(attempt['attemptId']) ||
       !reservations.reserve({
         authorizationKey: attempt['authorizationKey'],
         attemptId: attempt['attemptId'],
+        status: attempt['status'],
       })
     ) {
       return Effect.fail(failure('invalid-reservation', 'reservation snapshot violates invariants'))
     }
   }
   return Effect.succeed(reservations)
+}
+
+export const markPaymentBroadcasting = (
+  reservations: PaymentReservations,
+  authorizationKey: string,
+  attemptId: string,
+): Effect.Effect<ReservedPaymentAttempt, PaymentReservationFailure> => {
+  const previous = reservations.find(authorizationKey)
+  if (previous === undefined || previous.attemptId !== attemptId) {
+    return Effect.fail(failure('attempt-mismatch', 'attempt does not own this authorization key'))
+  }
+  if (previous.status === 'broadcasting') return Effect.succeed(previous)
+  const broadcasting = { ...previous, status: 'broadcasting' as const }
+  return reservations.replace(broadcasting)
+    ? Effect.succeed(broadcasting)
+    : Effect.fail(failure('attempt-mismatch', 'reservation disappeared before broadcasting'))
 }
 
 export const reservePayment = (
@@ -90,7 +115,7 @@ export const reservePayment = (
       failure('invalid-reservation', 'authorization key and attempt ID are required'),
     )
   }
-  const attempt = { attemptId, authorizationKey }
+  const attempt = { attemptId, authorizationKey, status: 'reserved' as const }
   return reservations.reserve(attempt)
     ? Effect.succeed(attempt)
     : Effect.fail(failure('already-reserved', 'authorization key already has a payment attempt'))
