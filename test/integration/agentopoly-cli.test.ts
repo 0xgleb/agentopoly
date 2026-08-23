@@ -19,7 +19,7 @@ describe('Agentopoly CLI', () => {
 
     expect(exitCode).toBe(0)
     expect(stderr).not.toContain('Agentopoly command failed')
-    expect(stdout).toContain('provider <label> <prompt>')
+    expect(stdout).toContain('provider <label> [--print] <prompt>')
     expect(stdout).toContain('finalize <workspace>')
     expect(stdout).not.toContain('provider reliable')
     expect(stdout).not.toContain('provider malicious')

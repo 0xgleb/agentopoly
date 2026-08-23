@@ -103,6 +103,7 @@ const prepareRun = (profile: ProviderProfile): Effect.Effect<PreparedRun, CliFai
 const runProvider = (
   profile: ProviderProfile,
   prompt: string,
+  print: boolean,
 ): Effect.Effect<PreparedRun, CliFailure> =>
   Effect.gen(function* () {
     const run = yield* prepareRun(profile)
@@ -132,6 +133,7 @@ const runProvider = (
       '--agentopoly-events',
       relative(repositoryRoot, eventsPath),
     ]
+    if (print) args.push('-p')
     args.push(prompt)
 
     const exitCode = yield* Effect.tryPromise({
@@ -236,9 +238,9 @@ const printHelp = (): void => {
   console.log(`Agentopoly — paid work between autonomous Pi agents
 
 Usage:
-  agentopoly provider <label> <prompt>  Launch one runtime-configured provider
-  agentopoly verify <workspace>        Run the fixed verifier for one submitted workspace
-  agentopoly finalize <workspace>      Attempt exact settlement or record a typed refusal
+  agentopoly provider <label> [--print] <prompt>  Launch one runtime-configured provider
+  agentopoly verify <workspace>                  Run the fixed verifier for one workspace
+  agentopoly finalize <workspace>                Attempt settlement or record a typed refusal
 
 Provider sessions load the exact Oh My Pi package plus Agentopoly's project extension. They receive only fixture-scoped inspect and submit tools; no wallet, network, shell, or unrestricted filesystem capability.`)
 }
@@ -253,13 +255,17 @@ const main = (args: readonly string[]): Effect.Effect<void, CliFailure> =>
     }
 
     if (command === 'provider' && isProviderProfile(argument)) {
-      const prompt = remaining.join(' ').trim()
+      const print = remaining[0] === '--print'
+      const prompt = remaining
+        .slice(print ? 1 : 0)
+        .join(' ')
+        .trim()
       if (prompt.length === 0 || new TextEncoder().encode(prompt).byteLength > 4_096) {
         return yield* Effect.fail(
           failure('invalid-command', 'provider prompt must contain at most 4096 UTF-8 bytes'),
         )
       }
-      const run = yield* runProvider(argument, prompt)
+      const run = yield* runProvider(argument, prompt, print)
       console.log(`Workspace: ${run.relativeWorkspace}`)
       return
     }
