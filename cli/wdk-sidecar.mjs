@@ -95,7 +95,12 @@ const callWdkMcp = async (command) => {
     )
     if (command.type === 'get-source-address') {
       return {
-        result: await Effect.runPromise(decodeSourceAddressResult(result)),
+        result: await Effect.runPromise(
+          decodeSourceAddressResult(result, {
+            index: command.sourceAccountIndex,
+            network: command.network,
+          }),
+        ),
         type: command.type,
       }
     }

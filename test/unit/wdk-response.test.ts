@@ -11,13 +11,39 @@ describe('WDK MCP responses', () => {
   test('decodes the captured get_address result shape', async () => {
     expect(
       await Effect.runPromise(
-        decodeSourceAddressResult({
-          content: [
-            { text: '{"network":"ethereum-sepolia","index":0,"address":"0xbuyer"}', type: 'text' },
-          ],
-        }),
+        decodeSourceAddressResult(
+          {
+            content: [
+              {
+                text: '{"network":"ethereum-sepolia","index":0,"address":"0xbuyer"}',
+                type: 'text',
+              },
+            ],
+          },
+          { index: 0, network: 'ethereum-sepolia' },
+        ),
       ),
     ).toEqual({ address: '0xbuyer', index: 0, network: 'ethereum-sepolia' })
+  })
+
+  test('fails closed when WDK returns an address for a different account', async () => {
+    expect(
+      (
+        await Effect.runPromiseExit(
+          decodeSourceAddressResult(
+            {
+              content: [
+                {
+                  text: '{"network":"ethereum-sepolia","index":1,"address":"0xbuyer"}',
+                  type: 'text',
+                },
+              ],
+            },
+            { index: 0, network: 'ethereum-sepolia' },
+          ),
+        )
+      )._tag,
+    ).toBe('Failure')
   })
 
   test('binds a WDK preview to the requested destination, amount, and network', async () => {
@@ -55,8 +81,12 @@ describe('WDK MCP responses', () => {
   })
 
   test('fails closed on an incomplete response', async () => {
-    expect((await Effect.runPromiseExit(decodeSourceAddressResult({ content: [] })))._tag).toBe(
-      'Failure',
-    )
+    expect(
+      (
+        await Effect.runPromiseExit(
+          decodeSourceAddressResult({ content: [] }, { index: 0, network: 'ethereum-sepolia' }),
+        )
+      )._tag,
+    ).toBe('Failure')
   })
 })

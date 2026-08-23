@@ -42,13 +42,13 @@ const matchesTransfer = (value: Record<string, unknown>, expected: TransferExpec
 
 export const decodeSourceAddressResult = (
   input: unknown,
+  expected: Readonly<{ readonly index: number; readonly network: string }>,
 ): Effect.Effect<SourceAddressResult, WdkResponseFailure> =>
   Effect.flatMap(decodeTextContent(input), (parsed) =>
     typeof parsed['address'] === 'string' &&
     parsed['address'].trim().length > 0 &&
-    typeof parsed['network'] === 'string' &&
-    parsed['network'].trim().length > 0 &&
-    typeof parsed['index'] === 'number' &&
+    parsed['network'] === expected.network &&
+    parsed['index'] === expected.index &&
     Number.isSafeInteger(parsed['index']) &&
     parsed['index'] >= 0
       ? Effect.succeed({
