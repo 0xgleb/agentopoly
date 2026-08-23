@@ -12,6 +12,13 @@ import {
   resolveProviderWorkspace,
   type ProviderProfile,
 } from './provider-workspace.ts'
+import {
+  agreementWitnessFileName,
+  bindAgreementWitnessToVerification,
+  decodeSignedAgreementWitness,
+} from './agreement-witness.ts'
+import { decodeFinalizePolicy } from './finalize-policy.ts'
+import { authorizePayment } from './payment-policy.ts'
 import { decodeLatestVerification, selectSettlementEventsToAppend } from './settlement.ts'
 import { redactBoundedVerifierEvidence } from './verification-evidence.ts'
 
@@ -423,17 +430,84 @@ const finalizeRun = (workspaceCandidate: string): Effect.Effect<void, CliFailure
           const events = yield* selectSettlementEventsToAppend(eventLog, verification).pipe(
             Effect.mapError((cause) => failure('verification-failed', cause.reason)),
           )
+          if (events.length === 0) {
+            yield* releaseFinalizeLock(ownedLock)
+            console.log('Settlement refusal was already recorded; no events were appended.')
+            return
+          }
+          const authorization = yield* Effect.either(
+            Effect.gen(function* () {
+              const operatorPublicKey = Bun.env['AGENTOPOLY_AGREEMENT_OPERATOR_PUBLIC_KEY']
+              if (operatorPublicKey === undefined) {
+                return yield* Effect.fail(
+                  failure('verification-failed', 'local agreement witness public key is absent'),
+                )
+              }
+              const witnessText = yield* Effect.tryPromise({
+                try: () =>
+                  readFile(
+                    join(
+                      repositoryRoot,
+                      '.tmp',
+                      'agentopoly-agreements',
+                      agreementWitnessFileName(eventWorkspace),
+                    ),
+                    'utf8',
+                  ),
+                catch: () =>
+                  failure('verification-failed', 'durable signed agreement witness is absent'),
+              })
+              const witness = yield* decodeSignedAgreementWitness(witnessText, {
+                expectedWorkspace: eventWorkspace,
+                operatorPublicKey,
+              }).pipe(Effect.mapError((cause) => failure('verification-failed', cause.reason)))
+              const payment = yield* bindAgreementWitnessToVerification(witness, {
+                artifactHash: verification.artifactHash,
+                passed: verification.passed,
+                termsHash: verification.termsHash,
+                verificationHash: verification.evidenceHash,
+              }).pipe(Effect.mapError((cause) => failure('verification-failed', cause.reason)))
+              const policy = yield* decodeFinalizePolicy(
+                Bun.env['AGENTOPOLY_FINALIZE_POLICY'],
+              ).pipe(Effect.mapError((cause) => failure('verification-failed', cause.reason)))
+              const decision = authorizePayment({
+                agreement: {
+                  ...payment,
+                  sourceAccountIndex: policy.sourceAccountIndex,
+                  sourceAddress: policy.sourceAddress,
+                  sourceWallet: policy.sourceWallet,
+                },
+                artifactHash: verification.artifactHash,
+                policy,
+                termsHash: witness.termsHash,
+                verification: {
+                  artifactHash: verification.artifactHash,
+                  passed: verification.passed,
+                  termsHash: verification.termsHash,
+                  verificationHash: verification.evidenceHash,
+                },
+                verificationHash: verification.evidenceHash,
+              })
+              if (!decision.ok) {
+                return yield* Effect.fail(
+                  failure(
+                    'verification-failed',
+                    `local WDK policy refused payment: ${decision.reason}`,
+                  ),
+                )
+              }
+              return decision.value
+            }),
+          )
           yield* Effect.forEach(events, appendEvent, {
             concurrency: 1,
             discard: true,
           })
           yield* releaseFinalizeLock(ownedLock)
           console.log(
-            events.length === 0
-              ? 'Settlement refusal was already recorded; no events were appended.'
-              : verification.passed
-                ? 'WDK payment safely refused: exact local payment authorization is absent.'
-                : 'WDK payment safely refused: provider verification failed.',
+            authorization._tag === 'Right'
+              ? 'WDK payment safely refused: broadcast integration is not enabled.'
+              : `WDK payment safely refused: ${authorization.left.reason}`,
           )
         }),
       releaseFinalizeLockBestEffort,
