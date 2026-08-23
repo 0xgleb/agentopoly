@@ -20,6 +20,56 @@ const liveEvent = (
   ...fields,
 })
 
+const receiptRecorded = (
+  fields: Readonly<Record<string, unknown>> = {},
+): Readonly<Record<string, unknown>> => ({
+  artifactHash,
+  atomicAmount: '1500000',
+  attemptId: 'attempt-1',
+  authorizationKey: 'authorization-1',
+  destination: '0xprivate',
+  evidenceSource: 'live-agent-run',
+  jobId: 'normalize-market-handle-v1',
+  network: 'ethereum-sepolia',
+  recordedAt,
+  schemaVersion: 2,
+  termsHash: 'b'.repeat(64),
+  transactionHash: 'c'.repeat(64),
+  type: 'receipt.recorded',
+  verificationHash: 'd'.repeat(64),
+  workspace: '.tmp/agentopoly-runs/run-1',
+  ...fields,
+})
+
+const agreementObserved = (
+  fields: Readonly<Record<string, unknown>> = {},
+): Readonly<Record<string, unknown>> =>
+  liveEvent('agreement.observed', {
+    atomicAmount: '1500000',
+    executionDeadline: 1_787_400_800_000,
+    jobId: 'normalize-market-handle-v1',
+    network: 'ethereum-sepolia',
+    provider: 'provider-alpha',
+    serviceId: 'normalize-market-handle',
+    termsHash: 'b'.repeat(64),
+    workspace: '.tmp/agentopoly-runs/run-1',
+    ...fields,
+  })
+
+const verificationCompleted = (
+  fields: Readonly<Record<string, unknown>> = {},
+): Readonly<Record<string, unknown>> =>
+  liveEvent('verification.completed', {
+    artifactHash,
+    evidenceHash: 'd'.repeat(64),
+    jobId: 'normalize-market-handle-v1',
+    passed: true,
+    termsHash: 'b'.repeat(64),
+    verifierHash: 'e'.repeat(64),
+    workspace: '.tmp/agentopoly-runs/run-1',
+    ...fields,
+  })
+
 const capabilityObserved = (
   fields: Readonly<Record<string, unknown>> = {},
 ): Readonly<Record<string, unknown>> => ({
@@ -60,12 +110,7 @@ describe('browser economy projection', () => {
           profile: 'reliable-provider',
           workspace: '.tmp/agentopoly-runs/run-1',
         }),
-        liveEvent('verification.completed', {
-          artifactHash,
-          jobId: 'normalize-market-handle-v1',
-          passed: true,
-          workspace: '.tmp/agentopoly-runs/run-1',
-        }),
+        verificationCompleted(),
         liveEvent('payment.refused', {
           artifactHash,
           jobId: 'normalize-market-handle-v1',
@@ -206,6 +251,7 @@ describe('browser economy projection', () => {
       ],
       events: [],
       jobs: [],
+      receipts: [],
       terms: [],
       unobserved: ['signed terms', 'arbitration'],
     })
@@ -253,6 +299,65 @@ describe('browser economy projection', () => {
       expect(deduplicated.unobserved).toContain('signed terms')
       expect(deduplicated.unobserved).not.toContain('capability discovery')
     }
+  })
+
+  test('projects a receipt only when same-workspace agreement and passed verification bind it', () => {
+    const projection = projectEventLog(
+      eventLog([agreementObserved(), verificationCompleted(), receiptRecorded()]),
+      new Date(recordedAt),
+    )
+
+    expect(projection._tag).toBe('projection')
+    if (projection._tag === 'projection') {
+      expect(projection.receipts).toEqual([
+        {
+          atomicAmount: '1500000',
+          jobId: 'normalize-market-handle-v1',
+          network: 'ethereum-sepolia',
+        },
+      ])
+    }
+  })
+
+  test('refuses standalone, cross-workspace, or hash-mismatched versioned receipts', () => {
+    const standalone = projectEventLog(eventLog([receiptRecorded()]), new Date(recordedAt))
+    const crossWorkspace = projectEventLog(
+      eventLog([
+        agreementObserved(),
+        verificationCompleted({ workspace: '.tmp/agentopoly-runs/run-2' }),
+        receiptRecorded(),
+      ]),
+      new Date(recordedAt),
+    )
+    const hashMismatch = projectEventLog(
+      eventLog([
+        agreementObserved(),
+        verificationCompleted(),
+        receiptRecorded({ verificationHash: 'f'.repeat(64) }),
+      ]),
+      new Date(recordedAt),
+    )
+
+    expect(standalone).toEqual({ _tag: 'refused', reason: 'malformed-event-log' })
+    expect(crossWorkspace).toEqual({ _tag: 'refused', reason: 'malformed-event-log' })
+    expect(hashMismatch).toEqual({ _tag: 'refused', reason: 'malformed-event-log' })
+  })
+
+  test('keeps independent same-job receipts in separate workspaces', () => {
+    const projection = projectEventLog(
+      eventLog([
+        agreementObserved(),
+        verificationCompleted(),
+        receiptRecorded(),
+        agreementObserved({ workspace: '.tmp/agentopoly-runs/run-2' }),
+        verificationCompleted({ workspace: '.tmp/agentopoly-runs/run-2' }),
+        receiptRecorded({ workspace: '.tmp/agentopoly-runs/run-2' }),
+      ]),
+      new Date(recordedAt),
+    )
+
+    expect(projection._tag).toBe('projection')
+    if (projection._tag === 'projection') expect(projection.receipts).toHaveLength(2)
   })
 
   test('ignores a bounded legacy receipt without deriving settlement or reputation', () => {
@@ -307,6 +412,7 @@ describe('browser economy projection', () => {
       capabilities: [],
       events: [],
       jobs: [],
+      receipts: [],
       terms: [],
       unobserved: ['capability discovery', 'signed terms', 'arbitration'],
     })
